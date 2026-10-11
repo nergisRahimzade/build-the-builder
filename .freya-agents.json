@@ -1,0 +1,16 @@
+{
+ "base": {
+  "workflow_id": "8d08c52f-0237-4b80-a82e-ef8a58bdf704",
+  "agent_id": "9d757165-1ea0-4d5a-bb5a-13a80996a39b",
+  "version": 1
+ },
+ "brief-a": {
+  "workflow_id": "0bdb7da9-1db8-4172-8e7d-6352bcae69e7",
+  "agent_id": "de576f29-4c54-4290-a6d6-b003dc0b4904",
+  "version": 4
+ },
+ "brief-b": {
+  "workflow_id": "fc82bb80-90a1-4ab8-922a-fa110ab54cf9",
+  "agent_id": "806d13f0-c3a5-4535-a324-27d73c4c7e20"
+ }
+}
