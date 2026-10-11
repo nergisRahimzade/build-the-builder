@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import agent_builder as builder
+from agents.tool_context import ToolContext
 
 
 class BuilderToolTests(unittest.TestCase):
@@ -16,7 +17,9 @@ class BuilderToolTests(unittest.TestCase):
             (root / "traces/old.jsonl").write_text("needle PRIVATE_OLD_RUN")
             (root / "policy.md").write_text("needle " + "x" * 40000)
             with patch.object(builder, "KIT", root):
-                result = asyncio.run(builder.Grep.on_invoke_tool(None, json.dumps({"pattern": "needle", "path": ".", "glob": "**/*"})))
+                arguments = json.dumps({"pattern": "needle", "path": ".", "glob": "**/*"})
+                context = ToolContext(context=None, tool_name="Grep", tool_call_id="test", tool_arguments=arguments)
+                result = asyncio.run(builder.Grep.on_invoke_tool(context, arguments))
             self.assertNotIn("PRIVATE_OLD_RUN", result)
             self.assertIn("policy.md", result)
             self.assertLess(len(result), builder.MAX_TOOL_CHARS)
