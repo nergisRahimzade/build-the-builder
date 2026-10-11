@@ -52,7 +52,7 @@ class ClaudeResult:
                 async with client.messages.stream(model=self.agent.model, max_tokens=20000,
                     system=self.agent.instructions, messages=self.messages,
                     tools=[{"name": tool.name, "description": tool.description, "input_schema": tool.params_json_schema} for tool in tools.values()],
-                    tool_choice={"type": "any"}) as stream:
+                    tool_choice={"type": "auto"}) as stream:
                     response = await stream.get_final_message()
                 self.context_wrapper.usage.requests += 1
                 self.context_wrapper.usage.total_tokens += response.usage.input_tokens + response.usage.output_tokens
@@ -74,6 +74,8 @@ class ClaudeResult:
                         finishing = finishing or block.name == "FinishBuild"
                 if results:
                     self.messages.append({"role": "user", "content": results})
+                elif not finishing:
+                    self.messages.append({"role": "user", "content": "Continue executing the build using the tools. Call FinishBuild after the validated saves and tests; a plan is not completion."})
                 if finishing:
                     return
             raise RuntimeError("Claude builder exceeded its turn limit")
