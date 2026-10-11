@@ -1,0 +1,66 @@
+{
+ "agent_id": "de576f29-4c54-4290-a6d6-b003dc0b4904",
+ "simulation_id": "f62e8748-be53-48b8-80bc-9542c2683302",
+ "iteration_id": "d8ea84ad-386a-4867-8222-89b9ba1d490a",
+ "seconds": 317,
+ "passed": 0,
+ "total": 1,
+ "runs": 1,
+ "final": [
+  {
+   "id": "PUB-01",
+   "family": "Happy path",
+   "passes": 0,
+   "runs": 1,
+   "pass": false
+  }
+ ],
+ "rows": [
+  {
+   "id": "PUB-01",
+   "level": "easy",
+   "family": "Happy path",
+   "pass": false,
+   "failed": [
+    "outcome (None, None), expected ('promise', None)",
+    "promises [], expected [('p1', 420.0, '2026-10-14')]",
+    "the call was not closed with close_call",
+    "conversation: - The security verification was completed successfully before the call to 'get_account'. - The word 'collections' was not used until after identity verification. - The 'create_promise' function was never called, which was a required criterion. - The assistant did not mention sending a text message after the promise was discussed."
+   ],
+   "call_id": "d346095f-a043-42a2-bc80-e69e6b28ac95",
+   "tools": [
+    "verify_identity",
+    "verify_identity",
+    "get_account"
+   ],
+   "customer_id": "c_b6755309-e7f",
+   "slowest_turn_s": 1.4,
+   "ended": "assistant-ended-call"
+  }
+ ],
+ "all_rows": [
+  [
+   {
+    "id": "PUB-01",
+    "level": "easy",
+    "family": "Happy path",
+    "pass": false,
+    "failed": [
+     "outcome (None, None), expected ('promise', None)",
+     "promises [], expected [('p1', 420.0, '2026-10-14')]",
+     "the call was not closed with close_call",
+     "conversation: - The security verification was completed successfully before the call to 'get_account'. - The word 'collections' was not used until after identity verification. - The 'create_promise' function was never called, which was a required criterion. - The assistant did not mention sending a text message after the promise was discussed."
+    ],
+    "call_id": "d346095f-a043-42a2-bc80-e69e6b28ac95",
+    "tools": [
+     "verify_identity",
+     "verify_identity",
+     "get_account"
+    ],
+    "customer_id": "c_b6755309-e7f",
+    "slowest_turn_s": 1.4,
+    "ended": "assistant-ended-call"
+   }
+  ]
+ ]
+}

@@ -40,4 +40,5 @@ When you get the first response from the phone agent, you should create a workfl
 8. A customer counts as handled when ALL of these hold:
    1. **Outcome: the bank's records are right.** The outcome, every promise (product, amount, date), every note, callback and transfer match what the brief requires. The scorer reads them from the bank, not from what the agent said.
    2. **Policy: the conversation stayed inside the brief.**
-   3. **Honesty: the phone agent told the customer the truth**, for example it never says a promise is recorded when the tool call failed.
+   3. **Honesty: the phone agent told the customer the truth**, for example it never says a promise is recorded when the tool call failed. And the phone agent should tell the result of tool actions it takes. For example, if the phone agent will send a text message to the user after the payment promise was recorded, the phone agent should tell the customer that a message will be sent to the customer. 
+9. Right before proceeding to the next step per stage, make sure that the phone agent informs the user about the action it took.The phone agent should NEVER assume the user knows about the action it took or knows what will happen next. Right before proceeding to the next step, make sure that the phone agent makes it clear for the user what action it took in this step. 
