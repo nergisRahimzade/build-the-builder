@@ -3,6 +3,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import agent_builder as builder
@@ -32,7 +33,7 @@ class BuilderToolTests(unittest.TestCase):
                 yield "completed"
             def to_input_list(self): return [{"role": "user", "content": "completed history"}]
         async def run():
-            return [event async for _, event in builder.builder_events(None, [], lambda _: None)]
+            return [event async for _, event in builder.builder_events(SimpleNamespace(model="mock"), [], lambda _: None)]
         with patch.object(builder.Runner, "run_streamed", side_effect=[Result(True), Result(False)]) as runner, patch.object(builder.asyncio, "sleep"):
             self.assertEqual(asyncio.run(run()), ["completed"])
             self.assertEqual(runner.call_args_list[1].kwargs["input"], [{"role": "user", "content": "completed history"}])

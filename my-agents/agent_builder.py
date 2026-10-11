@@ -139,7 +139,11 @@ def serialize(value):
 async def builder_events(agent, run_input, record):
     """Resume completed tool history after a model rate limit, without rerunning tools."""
     for retry in range(5):
-        result = Runner.run_streamed(agent, input=run_input, max_turns=150)
+        if str(agent.model).startswith("claude-"):
+            from claude_runner import ClaudeResult
+            result = ClaudeResult(agent, run_input, 150)
+        else:
+            result = Runner.run_streamed(agent, input=run_input, max_turns=150)
         try:
             async for event in result.stream_events():
                 yield result, event
@@ -242,6 +246,8 @@ async def main(briefs, folder, tool_api=None, submission=False, mock_url=None, m
             for attempt in range(4):
                 async for result, event in builder_events(agent, run_input, record):
                     record({"type": event.type, "event": event})
+                    if event.type == "builder_text":
+                        print(event.text, flush=True)
                     if event.type == "raw_response_event" and getattr(event.data, "type", None) == "response.created":
                         response = event.data.response
                         record({"type": "model_call", "model": getattr(response, "model", None) or agent.model,

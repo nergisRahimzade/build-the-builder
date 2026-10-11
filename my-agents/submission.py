@@ -72,7 +72,7 @@ def snapshot_inputs(root, folder, briefs, tool_api):
         else:
             shutil.copyfile(source, target)
         inputs.append({"source": str(source), "snapshot": str(target.relative_to(folder))})
-    for name in ("my-agents/agent_builder.py", "my-agents/submission.py", "my-agents/case_inputs.py",
+    for name in ("my-agents/agent_builder.py", "my-agents/claude_runner.py", "my-agents/submission.py", "my-agents/case_inputs.py",
                  "my-skills/build-phone-agent/SKILL.md", "freya.py",
                  "tools/run_cases.py", "tools/run_scenarios.py", "tools/test_evidence.py", "tools/audit_workflow.py", "tools/workflow_parts.py", "tools/score.py", "requirements-builder.txt",
                  "docs/workflow-format.md", "docs/tools-and-code.md",
