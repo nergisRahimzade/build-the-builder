@@ -58,7 +58,9 @@ class ClaudeResult:
                 self.context_wrapper.usage.total_tokens += response.usage.input_tokens + response.usage.output_tokens
                 yield Event("raw_response_event", data=SimpleNamespace(type="response.created", response=response))
                 yield Event("provider_response", data=response.model_dump())
-                self.messages.append({"role": "assistant", "content": [block.model_dump() for block in response.content]})
+                self.messages.append({"role": "assistant", "content": [block.model_dump(
+                    include={"type", "text", "id", "name", "input", "thinking", "signature", "data"}, exclude_none=True)
+                    for block in response.content]})
                 results, finishing = [], False
                 for block in response.content:
                     if block.type == "text":
