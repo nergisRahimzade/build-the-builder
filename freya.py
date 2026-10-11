@@ -44,6 +44,10 @@ def save_workflow(slot, workflow, state_file=".freya-agents.json"):
         state[slot]["version"] = update_workflow(state[slot]["workflow_id"], workflow); f.write_text(json.dumps(state, indent=1))
     else:
         state[slot] = create_workflow(f"{slot} {time.strftime('%m%d-%H%M%S')}", workflow); f.write_text(json.dumps(state, indent=1))
+    # Let the builder associate successful saves with this run, not stale workspace state.
+    if os.environ.get("FREYA_RUN_LOG"):
+        with open(os.environ["FREYA_RUN_LOG"], "a", encoding="utf-8") as log:
+            log.write(json.dumps({"slot": slot, **state[slot]}) + "\n")
     return state[slot]
 def validate_workflow(name, workflow): return api("POST", "/api/v2/workflow", {"name": name, "workflow": workflow}, dryRun="true")
 def update_workflow(workflow_id, workflow):

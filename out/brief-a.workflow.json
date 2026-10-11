@@ -1,11 +1,11 @@
 {
   "initial_node": "opening",
-  "system_prompt": "You are the digital assistant of Freya Bank responsible for early-stage collections. Speak clear and concise English. Always be truthful and make sure every process is confirmed with the tool result before speaking about account status or promises. Use the customer variables provided at the beginning of the call only (do not assume anything extra). Never mention the reason for the call or the product until after verifying identity. One step per stage, always use tool outputs to progress.",
+  "system_prompt": "You are the digital assistant of Freya Bank. Speak English. All your actions must strictly follow the bank's brief and use only the information and tools available.",
   "test_variables": {
     "customer_id": "c_test",
     "first_name": "Dana",
     "last_name": "Reyes",
-    "title": "Ms",
+    "title": "Mr",
     "now": "2026-10-14T11:00"
   },
   "global_nodes": {},
@@ -15,240 +15,124 @@
       "node_type": "conversation",
       "on_enter": {
         "type": "tts",
-        "text": "Hello, this is Freya Bank's digital assistant. This call is recorded. Am I speaking with {{title}} {{last_name}}?"
+        "text": "Hello, this is the digital assistant calling from Freya Bank, and this call is recorded. Am I speaking with {{title}} {{last_name}}?"
       },
-      "on_enter_first_entry_only": true,
-      "task_message": "Confirm if you are speaking with {{title}} {{last_name}}. Do not mention collections, payment, or any product before verifying identity. Only move forward if confirmation is clear. If unclear or not the customer after two asks, close as not_reached with correct reason. If asked if you are a robot or AI, say you are Freya Bank's digital assistant and continue.",
+      "task_message": "Greet the person. State you are a digital assistant from Freya Bank and the call is recorded. Do not mention collections, debt, payment or the product before confirming identity. Ask: \"Am I speaking with {{title}} {{last_name}}?\". Only proceed if the answer is 'yes', 'that's me', 'speaking' or the correct name. If not, ask again. If unclear after two asks, close as not_reached/unclear. If you get a question, answer it first, then re-ask. If the person on the line is not the customer, follow rules for 'someone else answers'. If asked if you are a robot or AI, say you're Freya Bank's digital assistant and continue.",
       "extraction_schema": [
-        { "name": "identity_status", "type": "string", "enum_values": ["confirmed", "not_confirmed", "wrong_number", "deceased", "relative", "unclear"], "description": "Status of person on the line", "min_confidence": 0.8 }
+        {"name": "identity_status", "type": "string", "enum_values": ["confirmed", "not_confirmed", "not_reached", "unclear", "callback", "no_callback", "wrong_number", "deceased"], "description": "Identity confirmation status based on the user's responses.", "min_confidence": 0.8}
       ],
       "transitions": [
-        { "target_node": "identity_check", "description": "Customer confirmed", "condition": { "logic": "or", "conditions": [ { "variable": "identity_status", "operator": "equals", "operand": "confirmed" } ] } },
-        { "target_node": "not_reached", "description": "Wrong number or deceased", "condition": { "logic": "or", "conditions": [ { "variable": "identity_status", "operator": "equals", "operand": "wrong_number" }, { "variable": "identity_status", "operator": "equals", "operand": "deceased" } ] } },
-        { "target_node": "relative_flow", "description": "A relative or someone else answers", "condition": { "logic": "or", "conditions": [ { "variable": "identity_status", "operator": "equals", "operand": "relative" } ] } },
-        { "target_node": "not_reached", "description": "Still not confirmed after second ask or unclear", "condition": { "logic": "or", "conditions": [ { "variable": "identity_status", "operator": "equals", "operand": "unclear" }, { "variable": "identity_status", "operator": "equals", "operand": "not_confirmed" } ] } }
+        {"target_node": "identity_verification", "description": "Identity confirmed: it's the right customer.", "condition": {"logic": "or", "conditions": [ {"variable": "identity_status", "operator": "equals", "operand": "confirmed"} ]}},
+        {"target_node": "callback", "description": "Callback is requested.", "condition": {"logic": "or", "conditions": [ {"variable": "identity_status", "operator": "equals", "operand": "callback"} ]}},
+        {"target_node": "not_reached_no_callback", "description": "No suitable callback time offered.", "condition": {"logic": "or", "conditions": [ {"variable": "identity_status", "operator": "equals", "operand": "no_callback"} ]}},
+        {"target_node": "not_reached_wrong_number", "description": "Wrong number.", "condition": {"logic": "or", "conditions": [ {"variable": "identity_status", "operator": "equals", "operand": "wrong_number"} ]}},
+        {"target_node": "not_reached_deceased", "description": "Deceased.", "condition": {"logic": "or", "conditions": [ {"variable": "identity_status", "operator": "equals", "operand": "deceased"} ]}},
+        {"target_node": "not_reached_unclear", "description": "Unclear after two asks.", "condition": {"logic": "or", "conditions": [ {"variable": "identity_status", "operator": "equals", "operand": "unclear"} ]}}
       ]
     },
-    "relative_flow": {
-      "name": "relative_flow",
+    "callback": {
+      "name": "callback",
       "node_type": "conversation",
-      "task_message": "If not the customer, do not reveal the reason for the call or any account details. Ask when {{title}} {{last_name}} can be reached. Schedule a callback for today or next business day, 10:00-19:00 and later than now; otherwise close appropriately. If a relative offers to answer security questions or to pay, politely decline and proceed per the brief.",
-      "extraction_schema": [
-        { "name": "callback_date", "type": "date", "description": "Proposed callback date.", "min_confidence": 0.7 },
-        { "name": "callback_time", "type": "string", "description": "Proposed callback time (HH:MM).", "min_confidence": 0.7 },
-        { "name": "callback_accepted", "type": "string", "enum_values": ["valid","invalid","none"], "description": "Whether a valid callback can be scheduled.", "min_confidence": 0.7 }
-      ],
+      "task_message": "Obtain a date and time for callback from today or the next business day (10:00-19:00, after now). If a valid time is given, call schedule_callback with the date and time, inform the person, then close_call with not_reached/callback.  If not, ask once for another time, and if again invalid, close_call with not_reached/no_callback.",
       "tools": [
         {
           "type": "function",
-          "config": { "timeoutMs": 10000, "maxRetries": 0 },
           "function": {
+            "description": "Schedule a callback for the customer.",
             "name": "schedule_callback",
             "handler": "__function__:api_call",
-            "description": "Book a callback for the customer.",
             "parameters": {
               "type": "object",
               "properties": {
-                "url": { "type": "string", "default": "https://freya-bank-mock.freyavoice.workers.dev/v1/schedule_callback" },
-                "method": { "type": "string", "default": "POST" },
-                "body": {
-                  "type": "object",
-                  "required": ["customer_id", "date", "time"],
-                  "properties": {
-                    "customer_id": { "type": "string", "default": "{{customer_id}}" },
-                    "date": { "type": "string", "default": "{{callback_date}}" },
-                    "time": { "type": "string", "default": "{{callback_time}}" }
-                  }
-                },
-                "headers": {
-                  "type": "object",
-                  "properties": {
-                    "Content-Type": { "type": "string", "default": "application/json" }
-                  }
-                }
-              }
+                "customer_id": {"type": "string", "default": "{{customer_id}}"},
+                "date": {"type": "string", "default": "{{callback_date}}"},
+                "time": {"type": "string", "default": "{{callback_time}}"}
+              },
+              "required": ["customer_id", "date", "time"]
             }
-          },
-          "response_mapping": [ { "path": "data.ok", "variable": "cb_ok" } ]
+          }
         }
       ],
-      "transitions": [
-        { "target_node": "not_reached", "description": "Valid callback scheduled", "condition": {"logic":"or","conditions":[{"variable":"callback_accepted","operator":"equals","operand":"valid"}] } },
-        { "target_node": "not_reached", "description": "No valid callback possible", "condition": {"logic":"or","conditions":[{"variable":"callback_accepted","operator":"equals","operand":"invalid"}, {"variable":"callback_accepted","operator":"equals","operand":"none"} ] } }
-      ]
-    },
-    "identity_check": {
-      "name": "identity_check",
-      "node_type": "conversation",
-      "task_message": "Ask for two security answers: date of birth and last 4 digits of phone, in order. Call verify_identity for each (convert dates to YYYY-MM-DD). Handle up to three wrong answers total. If hint 'day_month_swapped' appears, ask again as required. Exit after 3 wrong; if declined, explain once that these protect their account, then close as required. If unable to proceed after 3 wrong or 2 declines, close as not_verified. Respond if customer asks if you are a robot, but continue identity process.",
-      "tools": [
-        {
-          "type": "function",
-          "config": { "timeoutMs": 12000, "maxRetries": 0 },
-          "function": {
-            "name": "verify_identity",
-            "handler": "__function__:api_call",
-            "description": "Check one security answer: date_of_birth or phone_last4.",
-            "parameters": {
-              "type": "object",
-              "properties": {
-                "url": { "type": "string", "default": "https://freya-bank-mock.freyavoice.workers.dev/v1/verify_identity" },
-                "method": { "type": "string", "default": "POST" },
-                "body": { "type": "object", "required": ["customer_id", "field", "answer"], "properties": {
-                  "customer_id": { "type": "string", "default": "{{customer_id}}" },
-                  "field": { "type": "string", "enum": ["date_of_birth","phone_last4"], "default": "{{field}}" },
-                  "answer": { "type": "string", "default": "{{answer}}" }
-                } },
-                "headers": { "type": "object", "properties": { "Content-Type": { "type": "string", "default": "application/json" } } }
-              }
-            }
-          },
-          "response_mapping": [
-            { "path": "data.verified", "variable": "current_verified" },
-            { "path": "data.hint", "variable": "id_hint" },
-            { "path": "data.wrong_answers_left", "variable": "wrong_answers_left" },
-            { "path": "data.all_verified", "variable": "all_verified" }
-          ]
-        }
+      "extraction_schema": [
+        {"name": "callback_date", "type": "date", "description": "Callback date.", "min_confidence": 0.8},
+        {"name": "callback_time", "type": "string", "description": "Callback time (HH:MM).", "min_confidence": 0.8}
       ],
       "transitions": [
-        { "target_node": "state_account", "description": "identity verified", "condition": { "logic": "or", "conditions": [ { "variable": "all_verified", "operator": "equals", "operand": "true" }, { "variable": "all_verified", "operator": "equals", "operand": "True" } ] } },
-        { "target_node": "not_verified", "description": "failed identity or declined after 3 tries/2 refusals", "condition": { "logic": "or", "conditions": [ { "variable": "wrong_answers_left", "operator": "less_than", "operand": 1 } ] } }
+        {"target_node": "end_not_reached_callback", "description": "Callback scheduled.", "condition": {"logic": "or", "conditions": [ {"variable": "callback_date", "operator": "is_set"}, {"variable": "callback_time", "operator": "is_set"} ]}}
       ]
     },
-    "state_account": {
-      "name": "state_account",
-      "node_type": "conversation",
-      "task_message": "Call get_account to retrieve product, debt, amount due, and days late. Say you are calling from the collections team about a late payment after this. State the product in words, amount due, and days late. Then follow policy for deadlines, payment floor, promise collection and persuasion attempts as described in the brief. Never promise to record a payment or perform any change unless the tool result confirms."
-      ,
-      "tools": [
-        {
-          "type": "function",
-          "config": { "timeoutMs": 12000, "maxRetries": 2 },
-          "function": {
-            "name": "get_account",
-            "handler": "__function__:api_call",
-            "description": "Fetches late product info after identity is verified.",
-            "parameters": {
-              "type": "object",
-              "properties": {
-                "url": { "type": "string", "default": "https://freya-bank-mock.freyavoice.workers.dev/v1/get_account" },
-                "method": { "type": "string", "default": "POST" },
-                "body": { "type": "object", "required": ["customer_id"], "properties": { "customer_id": { "type": "string", "default": "{{customer_id}}" } } },
-                "headers": { "type": "object", "properties": { "Content-Type": { "type": "string", "default": "application/json" } } }
-              }
-            }
-          },
-          "response_mapping": [
-            { "path": "data.products", "variable": "products" }
-          ]
-        }
-      ],
-      "transitions": [
-        { "target_node": "promise_collection", "description": "Account details said", "condition": { "operator": "always" } } 
-      ]
-    },
-    "promise_collection": {
-      "name": "promise_collection",
-      "node_type": "conversation",
-      "task_message": "Collect a payment promise according to all rules in the brief: check business days, floors, deadlines and allowed amounts/dates; confirm with the customer, then CALL create_promise only after a clear yes. If hardship or policy triggers, handle exactly per brief (support/transfer, dispute, decline, etc). Read the promise back, and only confirm after success. If create_promise fails, retry once; still fails, report and terminate as no_promise with appropriate reason. If payment plan or human is requested, handle per rules. Always progress based on the tool response, not what the customer said. If no promise, close with the brief’s given outcome/reason.",
-      "tools": [
-        {
-          "type": "function",
-          "config": { "timeoutMs": 12000, "maxRetries": 1 },
-          "function": {
-            "name": "create_promise",
-            "handler": "__function__:api_call",
-            "description": "Record payment promise only after customer has confirmed amount & date.",
-            "parameters": {
-              "type": "object",
-              "properties": {
-                "url": { "type": "string", "default": "https://freya-bank-mock.freyavoice.workers.dev/v1/create_promise" },
-                "method": { "type": "string", "default": "POST" },
-                "body": {
-                  "type": "object", "required": ["customer_id","product_id","amount","date"],
-                  "properties": {
-                    "customer_id": { "type": "string", "default": "{{customer_id}}" },
-                    "product_id": { "type": "string", "default": "{{product_id}}" },
-                    "amount": { "type": "number", "default": "{{amount}}" },
-                    "date": { "type": "string", "default": "{{promise_date}}" }
-                  }
-                },
-                "headers": { "type": "object", "properties": { "Content-Type": { "type": "string", "default": "application/json" } } }
-              }
-            }
-          },
-          "response_mapping": [
-            { "path": "data.ok", "variable": "promise_ok" },
-            { "path": "data.promise_id", "variable": "promise_id" }
-          ]
-        }
-      ],
-      "transitions": [
-        { "target_node": "outcome", "description": "Promise recorded", "condition": { "logic": "or", "conditions": [ { "variable": "promise_ok", "operator": "equals", "operand": "true" }, { "variable": "promise_ok", "operator": "equals", "operand": "True" } ] } },
-        { "target_node": "outcome", "description": "Could not record promise/failed/declined/etc", "condition": { "operator": "always" } }
-      ]
-    },
-    "not_verified": {
-      "name": "not_verified",
+    "not_reached_no_callback": {
+      "name": "not_reached_no_callback",
       "node_type": "end_call",
-      "on_enter": { "type": "tts", "text": "We're unable to verify your identity. Please use the Freya app or visit a branch. Thank you and goodbye." },
+      "on_enter": {"type": "silent"},
       "disable_inactivity_monitor": true,
       "transitions": [],
       "terminal": {
         "type": "function",
         "function": {
-          "name": "not_verified",
+          "name": "not_reached_no_callback",
           "handler": "__function__:end_call",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "message_mode": { "type": "string", "default": "custom" },
-              "spoken_message": { "type": "string", "default": "We're unable to verify your identity. Please use the Freya app or visit a branch. Goodbye." }
-            }
-          }
+          "parameters": {"type": "object", "properties": {"message_mode": {"type": "string", "default": "custom"}, "spoken_message": {"type": "string", "default": "Sorry, I can't schedule a callback at that time. Thank you and goodbye."}}}
         }
       }
     },
-    "not_reached": {
-      "name": "not_reached",
+    "not_reached_wrong_number": {
+      "name": "not_reached_wrong_number",
       "node_type": "end_call",
-      "on_enter": { "type": "tts", "text": "Thank you for your time. Goodbye." },
+      "on_enter": {"type": "silent"},
       "disable_inactivity_monitor": true,
       "transitions": [],
       "terminal": {
         "type": "function",
         "function": {
-          "name": "not_reached",
+          "name": "not_reached_wrong_number",
           "handler": "__function__:end_call",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "message_mode": { "type": "string", "default": "custom" },
-              "spoken_message": { "type": "string", "default": "Thank you for your time. Goodbye." }
-            }
-          }
+          "parameters": {"type": "object", "properties": {"message_mode": {"type": "string", "default": "custom"}, "spoken_message": {"type": "string", "default": "Thank you for letting us know. Goodbye."}}}
         }
       }
     },
-    "outcome": {
-      "name": "outcome",
+    "not_reached_deceased": {
+      "name": "not_reached_deceased",
       "node_type": "end_call",
-      "on_enter": { "type": "tts", "text": "Thank you for speaking with Freya Bank. Goodbye." },
+      "on_enter": {"type": "silent"},
       "disable_inactivity_monitor": true,
       "transitions": [],
       "terminal": {
         "type": "function",
         "function": {
-          "name": "complete",
+          "name": "not_reached_deceased",
           "handler": "__function__:end_call",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "message_mode": { "type": "string", "default": "custom" },
-              "spoken_message": { "type": "string", "default": "Thank you for speaking with Freya Bank. Goodbye." }
-            }
-          }
+          "parameters": {"type": "object", "properties": {"message_mode": {"type": "string", "default": "custom"}, "spoken_message": {"type": "string", "default": "I am sorry for your loss. Goodbye."}}}
+        }
+      }
+    },
+    "not_reached_unclear": {
+      "name": "not_reached_unclear",
+      "node_type": "end_call",
+      "on_enter": {"type": "silent"},
+      "disable_inactivity_monitor": true,
+      "transitions": [],
+      "terminal": {
+        "type": "function",
+        "function": {
+          "name": "not_reached_unclear",
+          "handler": "__function__:end_call",
+          "parameters": {"type": "object", "properties": {"message_mode": {"type": "string", "default": "custom"}, "spoken_message": {"type": "string", "default": "Sorry, I could not confirm the customer. Goodbye."}}}
+        }
+      }
+    },
+    "end_not_reached_callback": {
+      "name": "end_not_reached_callback",
+      "node_type": "end_call",
+      "on_enter": {"type": "silent"},
+      "disable_inactivity_monitor": true,
+      "transitions": [],
+      "terminal": {
+        "type": "function",
+        "function": {
+          "name": "not_reached_callback",
+          "handler": "__function__:end_call",
+          "parameters": {"type": "object", "properties": {"message_mode": {"type": "string", "default": "custom"}, "spoken_message": {"type": "string", "default": "Thank you, I have scheduled the callback. Goodbye."}}}
         }
       }
     }

@@ -7,11 +7,11 @@
  "brief-a": {
   "workflow_id": "0bdb7da9-1db8-4172-8e7d-6352bcae69e7",
   "agent_id": "de576f29-4c54-4290-a6d6-b003dc0b4904",
-  "version": 5
+  "version": 8
  },
  "brief-b": {
   "workflow_id": "fc82bb80-90a1-4ab8-922a-fa110ab54cf9",
   "agent_id": "806d13f0-c3a5-4535-a324-27d73c4c7e20",
-  "version": 2
+  "version": 3
  }
 }

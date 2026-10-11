@@ -5,9 +5,10 @@
     python my-agents/agent_builder.py briefs/brief-a.md
 
 Needs OPENAI_API_KEY, FREYA_API_KEY and FREYA_BANK_TEAM_KEY.
-Messages and tool activity are written to traces/<start time>.jsonl.
+Messages, tool activity, exports and console output are retained in submissions/<run-id>/.
 """
-import asyncio, dataclasses, json, os, pathlib, re, shutil, subprocess, sys, time
+import argparse, asyncio, contextlib, dataclasses, json, os, pathlib, re, shlex, shutil, subprocess, sys, time, traceback, uuid
+from submission import Tee, snapshot_inputs, export_saved, write_submission, submission_metadata
 
 from agents import Agent, ItemHelpers, ModelSettings, Runner, function_tool # type: ignore
 
@@ -112,14 +113,23 @@ def serialize(value):
     return str(value)
 
 
-async def main(briefs):
-    trace = KIT / "traces" / (time.strftime("%Y%m%d-%H%M%S") + ".jsonl")
-    trace.parent.mkdir(exist_ok=True)
+async def main(briefs, folder, tool_api=None, submission=False):
+    trace = folder / "trace.jsonl"
+    extra = (f"\nUse the supplied tool API at {tool_api}; it overrides tools/openapi.json."
+             if tool_api else "")
+    if submission:
+        extra += ("\nThis is a hidden-brief submission run. Build exactly one agent for the supplied brief. "
+                  "Do not use practice briefs, practice API rules, or public-test-set.json for this brief. "
+                  "Only run customer tests if matching cases were supplied; otherwise report tests not run. "
+                  "Validate the workflow with freya.validate_workflow before saving.")
+    extra += ("\nSave every final workflow with freya.save_workflow using the brief filename stem as slot. "
+              "The runner exports the saved agents automatically when you finish. "
+              "Do not edit an agent after the run. Before each tool call, state its purpose in one sentence.")
     agent = Agent(
         name="Phone agent builder",
         model=os.environ.get("BUILDER_MODEL", "gpt-4.1"),
         instructions=(f"Work from {KIT}. The build-phone-agent skill follows. "
-                      "Use python instead of python3 on Windows.\n\n" + SKILL.read_text(encoding="utf-8")),
+                      "Use python instead of python3 on Windows.\n\n" + SKILL.read_text(encoding="utf-8") + extra),
         tools=[Read, Write, Edit, Glob, Grep, Bash],
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
@@ -141,6 +151,12 @@ async def main(briefs):
                     elif event.item.type == "tool_call_item":
                         call = event.item.raw_item
                         print(f"  [{call.name}] {call.arguments[:120]}", flush=True)
+                    elif event.item.type == "tool_call_output_item":
+                        print(str(event.item.output), flush=True)
+            sys.path.insert(0, str(KIT))
+            import freya
+            exports = export_saved(folder, [pathlib.Path(b).stem for b in briefs], freya.export_workflow, record)
+            print(f"Exported {len(exports)} agent(s) to {folder}", flush=True)
         except Exception as exc:
             record({"error": str(exc)})
             raise
@@ -151,9 +167,56 @@ async def main(briefs):
             # The SDK reports token usage, not a dollar cost.
             print(f"\ndone: {usage.requests if usage else 0} model calls, {elapsed:.0f} s, "
                   f"{usage.total_tokens if usage else 0} tokens. Trace: {trace}")
+    return exports
+
+
+def run_cli():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("briefs", nargs="+")
+    parser.add_argument("--tool-api", help="Tool API belonging to this brief")
+    parser.add_argument("--submission", action="store_true", help="One hidden brief and its own API")
+    parser.add_argument("--submission-config", default="submission-config.json", help="Team, members, repo and mock URL JSON")
+    args = parser.parse_args()
+    if args.submission and (len(args.briefs) != 1 or not args.tool_api):
+        parser.error("--submission requires exactly one brief and --tool-api")
+    if len({pathlib.Path(b).stem for b in args.briefs}) != len(args.briefs):
+        parser.error("Brief filename stems must be unique")
+    for name in [*args.briefs, *([args.tool_api] if args.tool_api else [])]:
+        if not local_path(name).is_file():
+            parser.error(f"Input file does not exist: {name}")
+    metadata = None
+    if args.submission:
+        try:
+            command = ["python", "my-agents/agent_builder.py",
+                *[local_path(b).resolve().relative_to(KIT.resolve()).as_posix() for b in args.briefs],
+                "--tool-api", local_path(args.tool_api).resolve().relative_to(KIT.resolve()).as_posix(),
+                "--submission", "--submission-config",
+                local_path(args.submission_config).resolve().relative_to(KIT.resolve()).as_posix()]
+            metadata = submission_metadata(KIT, local_path(args.submission_config),
+                shlex.join(command))
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            parser.error(str(exc))
+    folder = KIT / "submissions" / (time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
+    folder.mkdir(parents=True)
+    inputs = snapshot_inputs(KIT, folder, args.briefs, args.tool_api)
+    previous_log = os.environ.get("FREYA_RUN_LOG")
+    os.environ["FREYA_RUN_LOG"] = str(folder / "saves.jsonl")
+    try:
+        with (folder / "console.log").open("w", encoding="utf-8") as log:
+            with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
+                try:
+                    exports = asyncio.run(main(args.briefs, folder, args.tool_api, args.submission))
+                except BaseException:
+                    traceback.print_exc()
+                    (folder / "FAILED.txt").write_text("Run failed. Do not submit this folder.\n", encoding="utf-8")
+                    raise
+        write_submission(folder, inputs, exports, KIT, metadata)
+    finally:
+        if previous_log is None:
+            os.environ.pop("FREYA_RUN_LOG", None)
+        else:
+            os.environ["FREYA_RUN_LOG"] = previous_log
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit(__doc__)
-    asyncio.run(main(sys.argv[1:]))
+    run_cli()
