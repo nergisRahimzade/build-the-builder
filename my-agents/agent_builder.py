@@ -19,6 +19,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 KIT = ROOT
 SKILL = ROOT / "my-skills/build-phone-agent/SKILL.md"
+SEARCH_EXCLUDED = {".git", ".local-python", ".aws", ".codex", ".agents", "node_modules", "__pycache__", "submissions", "traces", ".wrangler"}
+MAX_TOOL_CHARS = 32000
+
+
+def bounded(text):
+    return text if len(text) <= MAX_TOOL_CHARS else text[:MAX_TOOL_CHARS] + "\n[Output truncated. Narrow the query or read a smaller range.]"
 
 
 def local_path(path):
@@ -30,7 +36,7 @@ def local_path(path):
 def Read(file_path: str, offset: int = 1, limit: int = 2000) -> str:
     """Read UTF-8 text with a one-based starting line and maximum line count."""
     lines = read_document(local_path(file_path)).splitlines()
-    return "\n".join(f"{i + offset}: {line}" for i, line in enumerate(lines[offset - 1:offset - 1 + limit]))
+    return bounded("\n".join(f"{i + offset}: {line}" for i, line in enumerate(lines[offset - 1:offset - 1 + min(limit, 2000)])))
 
 
 @function_tool
@@ -60,7 +66,7 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
 @function_tool
 def Glob(pattern: str, path: str = ".") -> str:
     """Find files using a glob pattern relative to a directory; ** searches recursively."""
-    return "\n".join(str(p) for p in local_path(path).glob(pattern) if p.is_file())
+    return bounded("\n".join(str(p) for p in local_path(path).glob(pattern) if p.is_file() and not set(p.relative_to(KIT).parts) & SEARCH_EXCLUDED))
 
 
 @function_tool
@@ -71,14 +77,18 @@ def Grep(pattern: str, path: str = ".", glob: str = "**/*") -> str:
     regex = re.compile(pattern)
     matches = []
     for file in files:
-        if not file.is_file():
+        if not file.is_file() or set(file.resolve().relative_to(KIT.resolve()).parts) & SEARCH_EXCLUDED or file.suffix.lower() in {".log", ".jsonl", ".pdf", ".pyc"}:
             continue
         try:
             lines = file.read_text(encoding="utf-8").splitlines()
         except (UnicodeError, OSError):
             continue
-        matches.extend(f"{file}:{i}: {line}" for i, line in enumerate(lines, 1) if regex.search(line))
-    return "\n".join(matches)
+        for i, line in enumerate(lines, 1):
+            if regex.search(line):
+                matches.append(f"{file}:{i}: {line[:600]}" + (" [line truncated]" if len(line) > 600 else ""))
+                if len(matches) >= 100:
+                    return bounded("\n".join(matches) + "\n[100-match limit reached. Narrow the search.]")
+    return bounded("\n".join(matches))
 
 
 def bash_executable():
@@ -106,7 +116,13 @@ async def Bash(command: str, timeout: int = 900000) -> str:
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=max(1, min(timeout, 1200000)) / 1000,
             )
-            return json.dumps({"exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr})
+            report = {"exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+            if len(result.stdout) + len(result.stderr) > MAX_TOOL_CHARS and env.get("FREYA_RUN_LOG"):
+                output_path = pathlib.Path(env["FREYA_RUN_LOG"]).parent / ("command-" + uuid.uuid4().hex + ".json")
+                output_path.write_text(redact(json.dumps(report)), encoding="utf-8")
+                report["full_output_file"] = str(output_path)
+            report["stdout"], report["stderr"] = bounded(result.stdout), bounded(result.stderr)
+            return json.dumps(report)
         except subprocess.TimeoutExpired as exc:
             return f"Command timed out after {exc.timeout} seconds.\n{exc.stdout or ''}\n{exc.stderr or ''}"
     return await asyncio.to_thread(run)
