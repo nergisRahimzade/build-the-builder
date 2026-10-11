@@ -1,0 +1,104 @@
+PAGE 1
+Call arrives from IVR
+Supervisor detects intent
+hands off to statement debt assistant
+Return to supervisor
+Return to supervisor
+Return to supervisor
+Return to supervisor
+Return to supervisor
+IVR: transfer to agent
+Second factor
+needed?
+Back to IVR for second factor
+then return to the assistant
+yes
+Card list service
+no
+Eligible
+cards?
+none
+How many?
+yes
+Name the customer's cards
+ask which one
+more than 1
+Card selected
+1
+Same card
+name?
+Ask last 4 digits
+yes
+noSame last4 digits?
+Ask last 6 digits
+yes
+no
+Statement
+debt?
+Say there is no statement debt
+read total debt
+none
+Read last 4 digits, card name,
+cut-off and due date
+yes
+TL debt?
+TL payment
+status
+yes
+No TL debt
+no
+TL: not paid
+debt and minimum
+none paid
+TL: minimum or more paid
+remaining debt, thanks
+min or more
+TL: below minimum paid
+debt, minimum, remaining
+below min
+USD / EUR
+debt?
+Read USD / EUR debt
+or say there is none
+Another
+card?
+no
+yes
+Customer
+answer
+nothing else pay debt
+Registered
+e-mail?
+e-mail
+Shared
+statement?
+cut-off date
+Read the registered address
+yes
+Say there is no suitable address
+no
+Send to this
+address?
+Send statement by e-mail
+yes no
+Primary or
+linked card?
+yes
+Read the card's cut-off week
+no
+Read linked and primary card
+cut-off week and next dates
+linked
+Read primary and linked card
+cut-off week and next dates
+primary
+Change it?
+no
+Offer the other weeks
+customer picks one
+yes
+Read due date
+Offer: change cut-off date
+or e-mail the statement
+Read the new week and dates
+get confirmation

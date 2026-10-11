@@ -1,0 +1,56 @@
+[
+  {
+    "requirement": "Opening: state name, bank, that the call is recorded; do not say collections, debt, payment or product before identity.",
+    "source": "briefs/brief-a.md: section 3.1",
+    "authority": "brief-a.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["title", "last_name"],
+    "branch": "opening_statement",
+    "test_coverage": "see test cases for identity and relative handling"
+  },
+  {
+    "requirement": "Identity: exactly two security questions (DoB and phone_last4), with answer repetition and day_month_swapped retry, max 3 wrong answers total.",
+    "source": "briefs/brief-a.md: section 5.11-5.15",
+    "authority": "brief-a.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["customer_id"],
+    "branch": "identity_check",
+    "test_coverage": "see test scripts for correct flows, retries, swaps, decline, max fails"
+  },
+  {
+    "requirement": "Early/late band: deadlines, business day, proposal logic.",
+    "source": "briefs/brief-a.md: section 7.18-23",
+    "authority": "brief-a.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["now"],
+    "branch": "deadline_calculation",
+    "test_coverage": "see promise test cases, boundary checks"
+  },
+  {
+    "requirement": "Promise creation: amount/amount floor per product type, exact product naming, confirmation before create, retry on service error.",
+    "source": "briefs/brief-a.md: sections 8, 10.34-38, 10.36-37",
+    "authority": "brief-a.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["product_id", "amount", "date"],
+    "branch": "promise_capture",
+    "test_coverage": "see test scenarios on amounts, rejections, floors"
+  },
+  {
+    "requirement": "Closing: every call ends by close_call with outcome/reason as per outcome table. Always thank and say goodbye before close_call.",
+    "source": "briefs/brief-a.md: section 12.46-47 and outcome table",
+    "authority": "brief-a.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["customer_id", "outcome", "reason"],
+    "branch": "closing",
+    "test_coverage": "all test transcripts must show closing node with correct function"
+  },
+  {
+    "requirement": "All other customer statements: handle hardship, dispute, paid, request for restructuring, callbacks and relatives as per rules before or after identity.",
+    "source": "briefs/brief-a.md: rules 4–45",
+    "authority": "brief-a.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": [],
+    "branch": "statement_handling",
+    "test_coverage": "negative cases, alternative outcomes"
+  }
+]

@@ -1,0 +1,42 @@
+
+done: 0 model calls, 5 s, 0 tokens. Trace: D:\NR\Build-the-Builder\build-the-builder-v3\build-the-builder\submissions\20261011-125824-ad17b3e4\trace.jsonl
+Traceback (most recent call last):
+  File "D:\NR\Build-the-Builder\build-the-builder-v3\build-the-builder\my-agents\agent_builder.py", line 352, in run_cli
+    exports = asyncio.run(asyncio.wait_for(main(args.briefs, folder, args.tool_api, args.submission, args.mock_url, args.model), timeout=1800))
+  File "C:\Users\nergi\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\nergi\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\nergi\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\nergi\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "D:\NR\Build-the-Builder\build-the-builder-v3\build-the-builder\my-agents\agent_builder.py", line 247, in main
+    async for result, event in builder_events(agent, run_input, record):
+    ...<20 lines>...
+                purpose = f"Review result of {call.get('tool', 'tool')} {call.get('arguments', '')} and continue building, validating or testing the brief's agent"
+  File "D:\NR\Build-the-Builder\build-the-builder-v3\build-the-builder\my-agents\agent_builder.py", line 148, in builder_events
+    async for event in result.stream_events():
+        yield result, event
+  File "D:\NR\Build-the-Builder\build-the-builder-v3\build-the-builder\my-agents\claude_runner.py", line 52, in stream_events
+    async with client.messages.stream(model=self.agent.model, max_tokens=20000,
+               ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        system=self.agent.instructions, messages=self.messages,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        tools=[{"name": tool.name, "description": tool.description, "input_schema": tool.params_json_schema} for tool in tools.values()],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        tool_choice={"type": "any"}) as stream:
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nergi\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\anthropic\lib\streaming\_messages.py", line 317, in __aenter__
+    raw_stream = await self.__api_request
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nergi\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\anthropic\_base_client.py", line 2276, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nergi\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\anthropic\_base_client.py", line 1941, in request
+    raise self._make_status_error_from_response(response) from None
+anthropic.BadRequestError: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'tool_choice: type "tool" and "any" are not supported for this model.'}, 'request_id': 'req_011Cfw3N8Za5wTuK4jSiVxNG'}

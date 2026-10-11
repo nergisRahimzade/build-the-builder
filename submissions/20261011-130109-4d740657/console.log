@@ -1,0 +1,1528 @@
+I'll start by reading the platform docs and the workflow helper code.
+  [Read] {"file_path": "docs/workflow-format.md", "offset": 1, "limit": 600}
+1: # Workflow format
+2: 
+3: This page describes the workflow JSON that defines a Freya agent. Read it before you write a builder. Tools, API calls and code are in [tools-and-code.md](tools-and-code.md). The REST calls are in [api.md](api.md).
+4: 
+5: Some statements are marked "verified in a working builder". Those come from a builder that created a 6-node workflow through the REST API and whose agent passed its practice cases.
+6: 
+7: ## What a workflow is
+8: 
+9: A workflow describes a conversation as a graph. Each **node** is one step of the conversation and has its own prompt. **Transitions** move the conversation from one node to the next. A transition fires on what the user said or on the value of a variable.
+10: 
+11: When you create a workflow through the API, the platform creates an agent for it. You run simulations against that agent.
+12: 
+13: ## Three model calls per turn
+14: 
+15: After each user message the platform makes three separate model calls. They do not share a prompt.
+16: 
+17: ```text
+18: user message
+19:     |
+20:     v
+21: 1. EXTRACTION   reads the message, stores variables
+22: 2. ROUTING      decides whether to leave the node
+23: 3. DIALOGUE     writes the agent's reply
+24: ```
+25: 
+26: | Call | What it sees | What it produces |
+27: |---|---|---|
+28: | Extraction | Recent conversation messages and the current node's `extraction_schema` | Variable values |
+29: | Routing | Recent conversation messages and the transition descriptions. It does not see the dialogue prompt | The transition to take, or none |
+30: | Dialogue | `system_prompt`, `role_message`, `task_message`, the full conversation history, and the node's `tools` | The reply, or a tool call |
+31: 
+32: Consequences:
+33: 
+34: - A routing instruction inside `task_message` has no effect on routing. Routing reads only transitions.
+35: - The dialogue model can call only the tools in the current node's `tools` array. Everything else (API calls on entry, code, ending the call) is run by the workflow engine.
+36: - Deterministic conditions (variable checks) need no model call. They are evaluated in code.
+37: 
+38: ## Top-level keys
+39: 
+40: ```json
+41: {
+42:   "initial_node": "greeting",
+43:   "system_prompt": "You are the assistant of a dental clinic. Speak English.",
+44:   "nodes": {},
+45:   "global_nodes": {},
+46:   "test_variables": { "customer_id": "c_test" }
+47: }
+48: ```
+49: 
+50: | Key | Type | Required | Meaning |
+51: |---|---|---|---|
+52: | `initial_node` | string | yes | Key of the node where every call starts |
+53: | `nodes` | object | yes | Map of node key to node definition |
+54: | `system_prompt` | string | no | Global rules. Part of the dialogue prompt in every node |
+55: | `global_nodes` | object | no | Interrupt handlers that can fire from any node. See "Global nodes" |
+56: | `test_variables` | object | no | Default values for call variables. See "Variables" |
+57: | `context_variables` | object | no | A state block of chosen variables for the dialogue model. See "Context variables" |
+58: | `tools` | array | no | Workflow-level lifecycle tools. See tools-and-code.md |
+59: | `agent_config` | object | no | Model and call settings. See below |
+60: | `nodePositions` | object | no | Layout for the visual editor. The working builder omits it |
+61: 
+62: **`agent_config`**: omit it. The platform fills in defaults. It holds model, voice and timeout settings that a builder for this event does not need. In a simulation you choose the models with the override fields described in api.md.
+63: 
+64: **No `null` values.** The schema is strict. Leave an optional field out, or set an optional string to `""`. A `null` fails validation.
+65: 
+66: The REST API takes the workflow inside a request body `{"name": "...", "workflow": {...}}`. The object described on this page is the value of `workflow`.
+67: 
+68: ## Node types
+69: 
+70: | `node_type` | Purpose | Speaks to the user | Carries |
+71: |---|---|---|---|
+72: | `conversation` | A dialogue step | yes | `task_message`, `tools`, `extraction_schema`, `transitions` |
+73: | `api_request` | Runs an HTTP call on entry | usually not | `pre_actions`, node-level `response_mapping`, `transitions` |
+74: | `code` | Runs a Python snippet on entry | usually not | `pre_actions` with a `code_exec` function, `transitions` |
+75: | `end_call` | Ends the call | optional farewell | `terminal` |
+76: 
+77: Other node types exist: `transfer_call`, `integration`, `knowledge_base`, `reschedule_call`, `invoke_agent`, `exit`. Telephony, voice settings, knowledge base and integrations also exist on the platform. You do not need any of them here and this page does not describe them.
+78: 
+79: The platform strips fields that do not belong to a node type, without an error:
+80: 
+81: - `tools` is kept only on `conversation` nodes.
+82: - `pre_actions` is kept only on `api_request` and `code` nodes (and the other non-conversation action types).
+83: 
+84: So a node cannot have both. If a call must run before a conversation node, put it in its own `api_request` node in front.
+85: 
+86: ## Node fields
+87: 
+88: | Field | Type | Default | Meaning |
+89: |---|---|---|---|
+90: | `name` | string | | Node name. Use the same value as the node's key, in `snake_case` |
+91: | `node_type` | string | | One of the types above |
+92: | `task_message` | string | | The instruction for the dialogue model in this node |
+93: | `role_message` | string | | Extra persona text for this node. Rarely needed |
+94: | `on_enter` | object | `{"type": "llm"}` | What happens on entry. See "Entry behaviour" |
+95: | `on_enter_first_entry_only` | boolean | `false` | Run the entry behaviour only on the first visit |
+96: | `transitions` | array | | Outgoing transitions, in priority order |
+97: | `routing_prompt` | string | | Extra context for the routing model in this node |
+98: | `loop_condition` | string | | Intent description for staying in the node. See "Loop conditions" |
+99: | `loop_prompt` | string | | Replaces `task_message` from the second turn in the node |
+100: | `extraction_schema` | array | | Variables to extract from user speech in this node |
+101: | `tools` | array | | Tools the dialogue model may call. `conversation` nodes only |
+102: | `pre_actions` | array | | Calls the engine runs on entry. `api_request` and `code` nodes |
+103: | `response_mapping` | array | | For `pre_actions` nodes: maps the call result to variables. Node level |
+104: | `passthrough` | boolean | `false` | Route right after entry, without waiting for the user |
+105: | `passthrough_default_transition` | string | | Target node for a passthrough node |
+106: | `max_node_turns` | integer | `10` | Cap on user turns spent in the node |
+107: | `max_turn_transition` | string | | Target node when the cap is reached |
+108: | `terminal` | object | | The end-call function. `end_call` nodes only |
+109: | `disable_inactivity_monitor` | boolean | `false` | Switch off silence check-ins for this node |
+110: | `suppress_tool_results` | boolean | `false` | Hide raw call results from the dialogue model. See tools-and-code.md |
+111: | `truncation_strategy` | string | `keep_all` | How much history the dialogue model sees. See "Limits" |
+112: | `truncation_window_size` | integer | `10` | Number of recent messages kept by `keep_recent` and `summarize` |
+113: | `reasoning_override` | string | `auto` | `enabled` or `disabled` forces model reasoning on or off for this node. Only models that support such a switch react to it |
+114: 
+115: A per-node `idle_config` (silence timeouts) and per-node speech settings also exist. They matter on voice calls only.
+116: 
+117: ## Prompts
+118: 
+119: The dialogue model receives one system message built from three parts:
+120: 
+121: ```text
+122: system_prompt        workflow level, the same in every node
+123: role_message         node level, optional
+124: ## Current Task
+125: task_message         node level, what to do now
+126: ```
+127: 
+128: | Field | Level | Use it for |
+129: |---|---|---|
+130: | `system_prompt` | workflow | Identity, language, tone, rules that hold in every node |
+131: | `role_message` | node | A different persona for one node. Most workflows leave it out |
+132: | `task_message` | node | What the agent must do in this step |
+133: | `loop_prompt` | node | A replacement for `task_message` after the first turn in the node |
+134: | `on_enter` | node | What the agent does when it enters the node |
+135: 
+136: Rules for `task_message`:
+137: 
+138: - Write instructions for the model, not a script.
+139: - Cover this node's job only.
+140: - Do not describe routing or name other nodes. The model does not know about nodes. Text such as "then move to the lookup node" makes it narrate steps that have not happened.
+141: - If the node has tools, refer to them by name and say when to call them. Do not repeat the tool descriptions.
+142: - In a node without tools, state that no tool call is allowed in this turn. If the node has a `loop_prompt`, put that rule in both prompts.
+143: 
+144: Example:
+145: 
+146: ```json
+147: {
+148:   "name": "collect_details",
+149:   "node_type": "conversation",
+150:   "task_message": "Ask which service the caller wants and on which day. Ask one question at a time. If the caller is unsure about the day, offer to check the next free days.",
+151:   "transitions": []
+152: }
+153: ```
+154: 
+155: ### Entry behaviour
+156: 
+157: | `on_enter` | Behaviour |
+158: |---|---|
+159: | `{"type": "llm"}` | The model writes the first line from `task_message`. Default. An optional `prompt` key overrides the entry instruction for this node |
+160: | `{"type": "tts", "text": "..."}` | A fixed line is spoken. No model call. `{{var}}` works in `text` |
+161: | `{"type": "silent"}` | Nothing is said. The node waits for the user, or routes at once if it is a passthrough node |
+162: | `{"type": "audio", "asset_id": "..."}` | Plays a recorded asset. Not needed here |
+163: 
+164: Set `on_enter_first_entry_only` to `true` when a node can be re-entered and must not repeat its opening line. This works better than a prompt rule such as "do not greet twice".
+165: 
+166: ### History across nodes
+167: 
+168: When the conversation moves from node A to node B:
+169: 
+170: - User and assistant messages are kept.
+171: - The system message is replaced by node B's prompts.
+172: - A loop prompt from node A is removed.
+173: 
+174: So node B can refer to anything said earlier. Variables also stay for the whole call.
+175: 
+176: ## Variables
+177: 
+178: All variables live in one table for the whole call. There is no per-node scope. A variable is never cleared on a transition. A later write with the same name overwrites it.
+179: 
+180: | Source | How it gets in |
+181: |---|---|
+182: | Call variables | Passed when the call or simulation starts |
+183: | `test_variables` | Workflow-level defaults for call variables |
+184: | Extraction | `extraction_schema` on a node |
+185: | Call results | `response_mapping`, and the automatic result keys described in tools-and-code.md |
+186: | Code | A code node or `code_exec` tool writes into `vars` |
+187: | System | Set by the platform |
+188: 
+189: ### `{{var}}` substitution
+190: 
+191: Write `{{variable_name}}` in prompts, `on_enter.text`, transition descriptions, URLs, headers and request bodies. The engine replaces it before the model or the HTTP call sees the text.
+192: 
+193: | Form | Result |
+194: |---|---|
+195: | `{{customer_name}}` | The value as a string |
+196: | `{{amount:json}}` | The value JSON-encoded. Use it inside request bodies |
+197: 
+198: Behaviour to know:
+199: 
+200: - Date values are formatted for speech in the agent's language when they are substituted into a prompt.
+201: - An unresolved variable in a prompt stays as the literal text `{{variable_name}}`. The model sees the placeholder. In a fixed spoken line (`on_enter.text`, a terminal `spoken_message`) the agent says it aloud.
+202: - In a field of an engine-run call (a `pre_actions` call or a lifecycle tool) an unresolved placeholder behaves in two ways. If the value is exactly one placeholder (`"{{x}}"`), the whole field is dropped from the request. If the value mixes text and a placeholder (`"Status: {{x}}"`), the request goes out with the literal `{{x}}` in it.
+203: - Do not reference a variable in a mixed value unless an earlier node always sets it.
+204: 
+205: ### Call variables and `test_variables`
+206: 
+207: Call variables are the inputs of one call, for example a customer id or the current time. In a simulation you pass them per persona in `customerVariablesMap` (see api.md).
+208: 
+209: `test_variables` is a top-level object of default values. On a web call to the workflow it is merged into the call variables. A value passed with the call wins over a test variable of the same name.
+210: 
+211: ```json
+212: {
+213:   "test_variables": {
+214:     "customer_id": "c_test",
+215:     "first_name": "Dana",
+216:     "now": "2026-03-11T10:00"
+217:   }
+218: }
+219: ```
+220: 
+221: Verified in a working builder: call variables are readable as `{{customer_id}}` in prompts and tool parameters, and as `vars.get("customer_id")` in code.
+222: 
+223: ### System variables
+224: 
+225: | Variable | Example | Meaning |
+226: |---|---|---|
+227: | `{{system.iso_utc_now}}` | `2026-03-11T14:30:00Z` | UTC timestamp of call start |
+228: | `{{system.todays_date_en_cst}}` | `11 March 2026 Wednesday 08:30` | English date, UTC-6 |
+229: | `{{system.todays_date_en_est}}` | `11 March 2026 Wednesday 09:30` | English date, UTC-5 |
+230: | `{{system.todays_date_tr}}` | | Turkish date with day name and time, UTC+3 |
+231: | `{{system.todays_date_tr.iso_8601}}` | `2026-03-11` | ISO date, UTC+3 |
+232: | `{{system.conversation}}` | `AGENT: hello\nUSER: hi` | Transcript so far |
+233: | `{{system.conversation.last-N}}` | | Last N turns. N is `1`, `5`, `10` or `20` |
+234: | `{{call.direction}}` | `web` | `inbound`, `outbound`, `web` or `simulation`. A chat simulation in the trial showed `web` |
+235: | `{{call.duration}}` | `42` | Whole seconds since call start |
+236: | `{{call.call_id}}` | | Platform call id |
+237: | `{{<node>.current_turns}}` | `2` | User turns in the node since the last entry. Resets on every transition |
+238: | `{{<node>.total_turns}}` | `5` | User turns in the node over the whole call |
+239: 
+240: There is no `{{current_date}}` placeholder. These system dates are the real clock. If your task supplies its own "now" as a call variable, use that variable.
+241: 
+242: `{{system.conversation.last-N}}` is useful in a transition description or a `routing_prompt` when the routing model needs more than the last message.
+243: 
+244: ### Context variables
+245: 
+246: Warning from a test on 10 October: a workflow saved over the API came back without this key, and the save gave no error. Do not rely on it. Write the values the model needs into the prompt with `{{variable}}` instead.
+247: 
+248: `context_variables` is a top-level key. It shows chosen variables to the dialogue model as a state block, so you do not have to write variable tables into prompt text.
+249: 
+250: ```json
+251: {
+252:   "context_variables": {
+253:     "pre_history_description": "Static call context",
+254:     "post_history_description": "Live state",
+255:     "items": [
+256:       { "name": "customer_tier", "placement": "pre_history", "description": "Customer tier" },
+257:       { "name": "attempt_count", "placement": "post_history" }
+258:     ]
+259:   }
+260: }
+261: ```
+262: 
+263: | Field | Meaning |
+264: |---|---|
+265: | `items[].name` | Name of a variable in the variable table. Must match `^[a-zA-Z_]\w*$` and be unique across both placements |
+266: | `items[].placement` | `pre_history` or `post_history` |
+267: | `items[].description` | Optional label |
+268: | `pre_history_description`, `post_history_description` | Heading text of each section |
+269: 
+270: Rules:
+271: 
+272: - An item points at a variable. It does not create one. If nothing sets the variable, the row is skipped without an error.
+273: - `pre_history` is written once into the system prompt. Use it only for values that never change during the call.
+274: - `post_history` is rendered again on every turn after the chat history and is not stored in the history. Use it for values that change.
+275: - The block is rendered as `<CONTEXT_VARIABLES>`, one line `- name (description): value` per populated item.
+276: - No other keys are allowed on an item. There is no `value`, `type` or `default`.
+277: - It does not affect extraction or tool parameter substitution.
+278: 
+279: ## Transitions
+280: 
+281: A transition is an object in a node's `transitions` array.
+282: 
+283: | Field | Type | Meaning |
+284: |---|---|---|
+285: | `target_node` | string | Key of the next node. May be the node itself. `__previous__` is allowed in global nodes |
+286: | `description` | string | What the transition is for. The routing model reads it |
+287: | `condition` | object | When the transition fires |
+288: | `is_tool_call` | boolean | The dialogue model triggers the transition by calling a tool. See "Tool-call transitions" |
+289: 
+290: ### Condition operators
+291: 
+292: Deterministic operators check a variable in code. No model call.
+293: 
+294: | Operator | Needs | True when |
+295: |---|---|---|
+296: | `equals` | `variable`, `operand` | `str(value) == str(operand)` |
+297: | `not_equals` | `variable`, `operand` | The inverse of `equals` |
+298: | `greater_than` | `variable`, `operand` | `float(value) > float(operand)` |
+299: | `less_than` | `variable`, `operand` | `float(value) < float(operand)` |
+300: | `contains` | `variable`, `operand` | `operand` is a substring of the value, ignoring case |
+301: | `is_set` | `variable` | The variable has any value |
+302: | `is_not_set` | `variable` | The variable has no value |
+303: | `always` | nothing | Always |
+304: 
+305: The semantic operator uses the routing model.
+306: 
+307: | Operator | Needs | True when |
+308: |---|---|---|
+309: | `matches_intent` | `description` | The routing model judges that the user's last message matches the description |
+310: 
+311: All `matches_intent` conditions of one evaluation are judged in a single model call.
+312: 
+313: ### Condition shapes
+314: 
+315: An unconditional transition:
+316: 
+317: ```json
+318: { "target_node": "next_step", "description": "always", "condition": { "operator": "always" } }
+319: ```
+320: 
+321: An intent condition:
+322: 
+323: ```json
+324: {
+325:   "target_node": "complaint",
+326:   "description": "The user wants to complain",
+327:   "condition": { "operator": "matches_intent", "description": "The user is unhappy or wants to file a complaint" }
+328: }
+329: ```
+330: 
+331: Variable conditions go inside a group. The top-level group always uses `"logic": "or"`:
+332: 
+333: ```json
+334: {
+335:   "target_node": "order_found",
+336:   "description": "The lookup returned an order",
+337:   "condition": {
+338:     "logic": "or",
+339:     "conditions": [
+340:       { "variable": "order_status", "operator": "equals", "operand": "shipped" },
+341:       { "variable": "order_status", "operator": "equals", "operand": "delivered" }
+342:     ]
+343:   }
+344: }
+345: ```
+346: 
+347: For AND, nest a group inside the top-level OR. Never put `"logic": "and"` at the top level.
+348: 
+349: ```json
+350: {
+351:   "target_node": "priority_desk",
+352:   "description": "Gold customer with a late order",
+353:   "condition": {
+354:     "logic": "or",
+355:     "conditions": [
+356:       {
+357:         "logic": "and",
+358:         "conditions": [
+359:           { "variable": "customer_tier", "operator": "equals", "operand": "gold" },
+360:           { "variable": "days_late", "operator": "greater_than", "operand": 3 }
+361:         ]
+362:       }
+363:     ]
+364:   }
+365: }
+366: ```
+367: 
+368: The working builder uses the bare form for `always` and the grouped form for every variable check. The internal reference also shows a bare single variable condition (`{"variable": ..., "operator": ..., "operand": ...}`) directly under `condition`.
+369: 
+370: ### Do not route on a boolean
+371: 
+372: `equals` compares strings. A boolean can arrive as `"True"` or as `"true"`, depending on how it was written into the table. A mismatch fails silently: the branch never fires and nothing reports an error.
+373: 
+374: - Prefer a string value such as `verified` or `rejected`, written by your code or by the API.
+375: - If you must test a boolean that comes from an API response, test both spellings. Verified in a working builder:
+376: 
+377: ```json
+378: {
+379:   "target_node": "wrap_up",
+380:   "description": "The booking call succeeded",
+381:   "condition": {
+382:     "logic": "or",
+383:     "conditions": [
+384:       { "variable": "booking_ok", "operator": "equals", "operand": "true" },
+385:       { "variable": "booking_ok", "operator": "equals", "operand": "True" }
+386:     ]
+387:   }
+388: }
+389: ```
+390: 
+391: `greater_than` and `less_than` convert both sides to numbers, so `2` and `"2"` behave the same. Use them for counters.
+392: 
+393: ### Order of evaluation
+394: 
+395: After each user message, routing runs in this order. The first match wins and routing stops.
+396: 
+397: ```text
+398: 1. loop_condition of the current node    match: stay in the node, use loop_prompt
+399: 2. the node's transitions, in list order match: go to target_node
+400: 3. global nodes                          match: enter the global node
+401: 4. nothing matched                       stay in the node, wait for the next user message
+402: ```
+403: 
+404: Within step 2:
+405: 
+406: - Transitions are checked in list order. Put specific conditions first and broad ones last.
+407: - Deterministic conditions are evaluated first. If one matches, no routing model call is made.
+408: - If several transitions of a node have the same `target_node`, the engine merges them at load time into one transition. Its condition is the OR of the originals. If one of them is unconditional, the merged transition is unconditional.
+409: 
+410: Routing also runs after a tool result arrives. Verified in a working builder: a transition on a variable that a tool's `response_mapping` sets fires in the same turn, without a further user message.
+411: 
+412: When nothing matches, there is no fallback. The agent stays and answers from the same `task_message`. Make sure every realistic path has a matching transition.
+413: 
+414: ### `routing_prompt`
+415: 
+416: A node-level string. It replaces the default intent-matching instruction of the routing model for this node. Use it when the transition descriptions cannot carry the rule, for example "stay here until both the name and the date are given".
+417: 
+418: ### Self-transition
+419: 
+420: A last transition with `always` that targets the node itself keeps the user in the node until an earlier transition matches.
+421: 
+422: ```json
+423: { "target_node": "collect_details", "description": "Keep collecting", "condition": { "operator": "always" } }
+424: ```
+425: 
+426: Prefer this to `loop_condition` in most cases. All routing then lives in one ordered list.
+427: 
+428: ### Loop conditions
+429: 
+430: `loop_condition` is an intent description. The routing model checks it before all transitions. When it matches, the agent stays in the node.
+431: 
+432: `loop_prompt` replaces `task_message` in the system message from the second turn in the node. The model sees one of the two, never both. Write it so that it stands alone. `{{var}}` works in it, so it can show what was already collected.
+433: 
+434: ```json
+435: {
+436:   "name": "collect_contact",
+437:   "node_type": "conversation",
+438:   "task_message": "Ask for the caller's full name and email address.",
+439:   "loop_condition": "The user has not yet given both a full name and an email address",
+440:   "loop_prompt": "Name so far: {{customer_name}}. Email so far: {{email}}. Ask only for what is still missing. When both are present, read them back once.",
+441:   "transitions": []
+442: }
+443: ```
+444: 
+445: Make the loop condition specific. "The user has not finished" matches everything and the agent never leaves.
+446: 
+447: ### Tool-call transitions
+448: 
+449: Set `is_tool_call` to `true` on a transition. The dialogue model then sees the transition as a tool named `transition_to_<node>` and triggers it by calling that tool. The router does not evaluate it after each turn.
+450: 
+451: ```json
+452: {
+453:   "target_node": "confirm_booking",
+454:   "description": "The caller accepted the offered slot",
+455:   "is_tool_call": true,
+456:   "condition": { "operator": "matches_intent", "description": "The caller accepted the offered slot" }
+457: }
+458: ```
+459: 
+460: Use it when the agent should decide to move, for example because of something it just said or computed. The agent can acknowledge and move in the same message. The target node's `on_enter` then asks the next question. Global nodes accept the same flag.
+461: 
+462: ### Passthrough nodes
+463: 
+464: A node with `"passthrough": true` routes right after its entry actions. It does not wait for the user. `api_request` and `code` nodes are normally passthrough nodes.
+465: 
+466: - Set `passthrough_default_transition` to the next node.
+467: - End `transitions` with an `always` transition. A passthrough node with no matching transition deadlocks.
+468: - Set `on_enter` to `{"type": "silent"}`, or to a short fixed line that covers the wait.
+469: 
+470: ```json
+471: {
+472:   "name": "prepare",
+473:   "node_type": "code",
+474:   "passthrough": true,
+475:   "passthrough_default_transition": "greeting",
+476:   "on_enter": { "type": "silent" },
+477:   "pre_actions": [],
+478:   "transitions": [
+479:     { "target_node": "greeting", "description": "always", "condition": { "operator": "always" } }
+480:   ]
+481: }
+482: ```
+483: 
+484: Verified in a working builder: a passthrough `code` node can be the `initial_node`. It runs before the agent says anything.
+485: 
+486: ### Global nodes
+487: 
+488: A global node is an interrupt handler. It can fire from any node. It is checked only after the current node's own transitions found no match.
+489: 
+490: A global node has the same fields as a normal node, plus:
+491: 
+492: | Field | Meaning |
+493: |---|---|
+494: | `condition` | When the global node activates. Same format as a transition condition |
+495: | `description` | Purpose of the node |
+496: | `excluded_nodes` | Array of node keys where it must not fire |
+497: | `is_tool_call` | Offer the global node to the dialogue model as a tool, not as a per-turn check |
+498: 
+499: `__previous__` as a `target_node` or as `passthrough_default_transition` returns to the node that was interrupted.
+500: 
+501: ```json
+502: {
+503:   "global_nodes": {
+504:     "off_topic": {
+505:       "name": "off_topic",
+506:       "description": "Brings the caller back to the subject",
+507:       "condition": { "operator": "matches_intent", "description": "The user talks about something unrelated to their order" },
+508:       "task_message": "Redirect the caller to the subject.",
+509:       "on_enter": { "type": "tts", "text": "I can only help with your order. Let us continue." },
+510:       "passthrough": true,
+511:       "passthrough_default_transition": "__previous__",
+512:       "excluded_nodes": ["goodbye"],
+513:       "transitions": [
+514:         { "target_node": "__previous__", "description": "always", "condition": { "operator": "always" } }
+515:       ]
+516:     }
+517:   }
+518: }
+519: ```
+520: 
+521: Rules:
+522: 
+523: - List terminal nodes in `excluded_nodes`, or the global node can loop.
+524: - Exclude nodes where an interrupt would do harm, for example an identity check.
+525: - For a plain redirect use a passthrough node with a fixed line. It is faster and more predictable than a model reply.
+526: - Use global nodes for interrupts that can happen anywhere. Do not copy the same transition into every node.
+527: 
+528: ## Extraction schema
+529: 
+530: `extraction_schema` is an array on a node. After each user message the extraction model fills the listed variables from the conversation.
+531: 
+532: ```json
+533: {
+534:   "extraction_schema": [
+535:     {
+536:       "name": "order_number",
+537:       "type": "string",
+538:       "description": "The order number the caller reads out",
+539:       "validation_pattern": "^[0-9]{8}$",
+540:       "max_retries": 2,
+541:       "min_confidence": 0.8
+542:     },
+543:     {
+544:       "name": "request_type",
+545:       "type": "string",
+546:       "enum_values": ["status", "cancel", "change_address", "other"],
+547:       "description": "What the caller wants to do with the order",
+548:       "min_confidence": 0.7
+549:     }
+550:   ]
+551: }
+552: ```
+553: 
+554: | Field | Type | Meaning |
+555: |---|---|---|
+556: | `name` | string | Variable name |
+557: | `type` | string | `string`, `integer`, `float`, `boolean`, `date`, `datetime`, `name`, `phone_number` |
+558: | `description` | string | What the variable is |
+559: | `enum_values` | array | Allowed values. Works on every type. The old `enum` type is deprecated and becomes `string` |
+560: | `extraction_prompt` | string | A custom extraction template. See the warning below |
+561: | `validation_pattern` | string | Regular expression the value must match |
+562: | `min_confidence` | number | 0.0 to 1.0. Values below it are discarded. Default `0.95` |
+563: | `max_retries` | integer | Retries after a failed validation, with the error given to the model |
+564: 
+565: How it works:
+566: 
+567: 1. The extraction model sees recent messages and the schema.
+568: 2. It returns structured values.
+569: 3. Confidence is computed from the model's token probabilities, not from a self-report.
+570: 4. Each value is checked against `validation_pattern` and `enum_values`.
+571: 5. On failure the model retries, up to `max_retries`.
+572: 
+573: Rules:
+574: 
+575: - **Set `min_confidence` on every variable.** The default of 0.95 is strict. A discarded value leaves no trace in the transcript, so it looks the same as "nothing was extracted".
+576: - **`extraction_prompt` replaces the whole built-in template.** It is not appended. A custom prompt must contain the input placeholders itself: `{{extractor.speech}}`, `{{extractor.conversation.last-10}}`, `{{extractor.type_preamble}}` and `{{extractor.variables_list}}`. Without them the extractor never sees the user's message and returns nothing on every turn, while dialogue and routing look healthy.
+577: - **Declare dates as `type: "date"`.** The date types give the extractor today's date and the rules for relative dates such as "tomorrow". A date typed as `string` gets no date anchor and the model guesses the year.
+578: - The built-in date rules turn vague expressions such as "next week" into a concrete date. If you need vague dates rejected, a custom prompt must say so and state that this overrides the general rules.
+579: - No `null`. Omit optional fields or use `""`.
+580: - An extracted variable is available to the same node's transitions in the same turn, and to every later node.
+581: 
+582: Inside `extraction_prompt` these date placeholders resolve: `{{date.today}}`, `{{time.now}}`, `{{date.day_of_week}}`, `{{date.yesterday}}`, `{{date.tomorrow}}`, `{{date.day_after_tomorrow}}`, `{{date.next_week}}`, `{{date.end_of_month}}`, `{{date.first_next_month}}`, `{{date.next_mon}}` to `{{date.next_sun}}`, `{{date.last_mon}}` to `{{date.last_sun}}`, `{{date.fnm_mon}}` to `{{date.fnm_sun}}` (first such weekday of next month), `{{date.weeks2}}`, `{{date.weeks3}}`, `{{date.weeks2_ago}}`, `{{date.weeks3_ago}}`. Do not rely on them outside extraction prompts.
+583: 
+584: **Fork on an extracted enum.** To route from one node to several paths, extract an enum and branch with `equals`. This is more reliable than several competing `matches_intent` transitions.
+585: 
+586: ```json
+587: {
+588:   "name": "menu",
+589:   "node_type": "conversation",
+590:   "task_message": "Tell the caller the order status in one sentence. Then ask whether they want to change the delivery address, cancel the order, or end the call.",
+591:   "extraction_schema": [
+592:     {
+593:       "name": "next_action",
+594:       "type
+[Output truncated. Narrow the query or read a smaller range.]
+  [Read] {"file_path": "docs/tools-and-code.md", "offset": 1, "limit": 600}
+1: # Tools and code
+2: 
+3: This page describes how a workflow calls HTTP APIs and runs Python. Read [workflow-format.md](workflow-format.md) first.
+4: 
+5: Statements marked "verified in a working builder" come from a builder that created a 6-node workflow through the REST API. The workflow has code nodes, `api_call` tools, post-hooks and transitions on tool results. Its agent passed its practice cases. Statements marked "seen in a trial call" come from the event log of a simulation call made with that builder.
+6: 
+7: ## Tool function shape
+8: 
+9: Every external action is a **tool function**. The shape is the same wherever you attach it.
+10: 
+11: ```json
+12: {
+13:   "type": "function",
+14:   "config": { "timeoutMs": 10000, "maxRetries": 2 },
+15:   "function": {
+16:     "name": "lookup_order",
+17:     "handler": "__function__:api_call",
+18:     "description": "Look up one order. CALL it when the caller asks about a specific order.",
+19:     "parameters": {
+20:       "type": "object",
+21:       "properties": {
+22:         "url": { "type": "string", "default": "https://api.example.com/v1/orders/lookup" },
+23:         "method": { "type": "string", "default": "POST" },
+24:         "headers": {
+25:           "type": "object",
+26:           "properties": { "Content-Type": { "type": "string", "default": "application/json" } }
+27:         },
+28:         "body": {
+29:           "type": "object",
+30:           "properties": {
+31:             "customer_id": { "type": "string", "default": "{{customer_id}}" },
+32:             "order_number": { "type": "string", "description": "Order number, digits only", "default": "{{order_number}}" }
+33:           },
+34:           "required": ["order_number"]
+35:         }
+36:       }
+37:     }
+38:   },
+39:   "response_mapping": [
+40:     { "path": "data.status", "variable": "order_status" }
+41:   ]
+42: }
+43: ```
+44: 
+45: | Field | Meaning |
+46: |---|---|
+47: | `type` | Always `"function"` |
+48: | `function.name` | Tool name. The model calls it by this name. Result variables are named after it |
+49: | `function.handler` | Which runtime executes the tool. See the table below |
+50: | `function.description` | Read by the dialogue model when the tool is in `tools`. Ignored in `pre_actions` |
+51: | `function.parameters` | JSON-schema object. `properties` holds the parameters |
+52: | `config.timeoutMs` | Timeout of one attempt, in milliseconds |
+53: | `config.maxRetries` | Tool-level retries of a failed call |
+54: | `config.interruptible` | `false` makes the tool run in the background. See "Background tools" |
+55: | `config.alwaysRunsAt` | Makes the tool a lifecycle tool. See "Lifecycle tools" |
+56: | `response_mapping` | Tool level, for tools in `tools`. Maps the result to variables |
+57: | `pre_process_code` | Python hook that runs before the call |
+58: | `post_process_code` | Python hook that runs after the call |
+59: 
+60: | Handler | Runs |
+61: |---|---|
+62: | `__function__:api_call` | An HTTP request |
+63: | `__function__:code_exec` | A Python snippet in a sandbox |
+64: | `__function__:end_call` | Hangs up. Used in the `terminal` of an `end_call` node |
+65: 
+66: Handlers for integrations, knowledge search, call transfer and rescheduling also exist. They are not needed here.
+67: 
+68: `api_call` parameters:
+69: 
+70: | Parameter | Meaning |
+71: |---|---|
+72: | `url` | Request URL. `{{var}}` works |
+73: | `method` | HTTP method |
+74: | `headers` | Object. Each header is a property with a `default` |
+75: | `body` | Object. Each body field is a property under `body.properties` |
+76: | `connect_retries` | Transport retries. See "Retries and timeouts" |
+77: 
+78: ## How a parameter gets its value
+79: 
+80: One key decides, per parameter: `default`.
+81: 
+82: | Declaration | Who supplies the value | Does the model see the parameter |
+83: |---|---|---|
+84: | `default` with a literal, or with a `{{var}}` that has a value | The workflow. The value is **baked** | No |
+85: | `default` with a `{{var}}` that has no value when the node is entered | The model | Yes, named after the variable, with the property's `type`, `description` and `enum` |
+86: | no `default` | The model | Yes |
+87: | `const` | Nobody. `const` does **not** bake | It only constrains the model's own output |
+88: 
+89: Rules:
+90: 
+91: - **Use `default` for fixed backend config** such as `url`, `method` and auth headers. At registration the engine moves every `default` into the tool's base config, resolves `{{var}}` from the variable table, and removes the field from the schema the model sees.
+92: - **Never use `const` for a value you want sent.** The engine reads only `default`. A `{{var}}` inside a `const` never resolves. An `api_call` whose `url` is a `const` fails with "URL is required".
+93: - **Baking happens when the node is entered.** A `{{var}}` default is resolved against the variable table at that moment.
+94: 
+95: The working builder uses this for every tool: `customer_id` has `"default": "{{customer_id}}"` and is baked from a call variable. Every other body field has `"default": "{{<field name>}}"`, where no variable of that name exists, so the model fills it. Verified in a working builder.
+96: 
+97: Seen in a trial call: the model's arguments are stored as `<tool>_args.<field>` in the variable table, for example `lookup_order_args.order_number`. They were not stored under the bare field name.
+98: 
+99: Take care that a model-filled field does not share its name with a variable that is already set when the node is entered. The value would be baked and the model would never see the parameter.
+100: 
+101: ### `api_call` body field rules
+102: 
+103: - Declare each body field as a leaf under `body.properties.<field>`.
+104: - Put the field's `type`, `description` and `enum` on that leaf. Put required fields in `body.required`.
+105: - Give each leaf its own `default`.
+106: - Do not put a field spec at the top level of `parameters.properties` next to a `body.default` template object. The engine looks for the spec at `body.properties.<field>`, does not find it, and the model sees only "Template variable: name". The `enum` and `description` are lost while the call still works.
+107: - A body that exists only as one `body.default` object also shows as an empty form in the dashboard editor. Saving from there removes the tool.
+108: 
+109: A `code_exec` tool is different: its parameters are true top-level arguments. Declare a model-filled one as a top-level property without `default`.
+110: 
+111: ### When a baked variable has no value
+112: 
+113: | Field type | Variable unset | Variable is `""` |
+114: |---|---|---|
+115: | Normal field in an engine-run call (`pre_actions`, lifecycle tool) | The field is dropped from the request. No error | The field is sent empty |
+116: | `code` of `code_exec` | The literal text `{{var}}` stays in the Python source and the snippet crashes | |
+117: 
+118: Fix: make sure an earlier node always sets the variable, even to a sentinel value. In code, read variables from `vars` and do not splice them in with `{{var}}`.
+119: 
+120: ### Constrain model-filled parameters
+121: 
+122: When a value must be one of a known set, do not use a free string. The model sometimes invents a value that looks plausible.
+123: 
+124: - Use an `enum` on the leaf, and list the values in the `description` as well.
+125: - Or use a `number` that is an index into a list, with the valid range in the description. A pre-hook or the backend turns the index into the real value.
+126: - If neither is possible, name the exact source in the description and tell the model to copy the value unchanged.
+127: 
+128: ```json
+129: {
+130:   "type": "object",
+131:   "properties": {
+132:     "queue": {
+133:       "type": "string",
+134:       "description": "Team that takes over. One of: billing, delivery, returns.",
+135:       "enum": ["billing", "delivery", "returns"],
+136:       "default": "{{queue}}"
+137:     }
+138:   },
+139:   "required": ["queue"]
+140: }
+141: ```
+142: 
+143: ## `pre_actions` versus `tools`
+144: 
+145: The placement decides who fires the call.
+146: 
+147: | Placement | Node type | Who calls it | When |
+148: |---|---|---|---|
+149: | `pre_actions` | `api_request`, `code` | The engine | On node entry, before any model turn |
+150: | `tools` | `conversation` | The dialogue model | During a turn, when the model decides to |
+151: | Workflow-level `tools` with `config.alwaysRunsAt` | none | The engine | At call start or call end |
+152: 
+153: The platform removes `tools` from non-conversation nodes and `pre_actions` from conversation nodes. It does so without an error: the JSON you sent looks fine, the create call succeeds, and the stored node has an empty array. A node cannot use both.
+154: 
+155: **Use `pre_actions`** when the call must always run and the model has nothing to decide. Example: after the order number is known, always fetch the order.
+156: 
+157: **Use `tools`** when the call depends on what the user says. Example: cancel the order only if the caller asks for it.
+158: 
+159: Differences in behaviour:
+160: 
+161: | | `pre_actions` | `tools` |
+162: |---|---|---|
+163: | Can be skipped | No | Yes. The model may not call it if the description and the prompt do not push for it |
+164: | Timing | Node entry | Inside a turn. The model can call a tool, speak, then call another |
+165: | Result in the conversation | A tool call and tool result pair is added to the history | The same |
+166: | `response_mapping` lives | On the **node** | On the **tool** |
+167: | `description` | Ignored | The only text the model reads about the tool |
+168: 
+169: To run a fixed call before a tool-driven conversation, use a passthrough `api_request` node and transition from it into the conversation node. Do not build a long chain of passthrough nodes for optional actions. Put those into one conversation node with several tools.
+170: 
+171: ### A `pre_actions` node
+172: 
+173: ```json
+174: {
+175:   "name": "fetch_order",
+176:   "node_type": "api_request",
+177:   "passthrough": true,
+178:   "passthrough_default_transition": "present",
+179:   "on_enter": { "type": "silent" },
+180:   "pre_actions": [
+181:     {
+182:       "type": "function",
+183:       "config": { "timeoutMs": 10000, "maxRetries": 2 },
+184:       "function": {
+185:         "name": "get_order",
+186:         "handler": "__function__:api_call",
+187:         "description": "Get the order.",
+188:         "parameters": {
+189:           "type": "object",
+190:           "properties": {
+191:             "url": { "type": "string", "default": "https://api.example.com/v1/get_order" },
+192:             "method": { "type": "string", "default": "POST" },
+193:             "headers": { "type": "object", "properties": { "Content-Type": { "type": "string", "default": "application/json" } } },
+194:             "body": { "type": "object", "properties": { "order_number": { "type": "string", "default": "{{order_number}}" } }, "required": [] }
+195:           }
+196:         }
+197:       }
+198:     }
+199:   ],
+200:   "response_mapping": [
+201:     { "path": "data.items", "variable": "items" }
+202:   ],
+203:   "transitions": [
+204:     { "target_node": "present", "description": "always", "condition": { "operator": "always" } }
+205:   ]
+206: }
+207: ```
+208: 
+209: The last `always` transition is mandatory. A passthrough node with no matching transition deadlocks.
+210: 
+211: ### Tool descriptions
+212: 
+213: In `tools`, the `description` decides whether the model calls the tool.
+214: 
+215: - Write it as an instruction with the trigger: "CALL it every time the caller gives an order number."
+216: - A plain description such as "Looks up an order" lets the model acknowledge the request in words and never call the tool. That is the most common failure of nodes with many tools.
+217: - If two tools could match, say which one not to use and name the other.
+218: - In `task_message`, put the tool rules before long reference text and state: when a rule says to use a tool, call the tool.
+219: - The working builder also tells the model to call one tool per message and to speak after every tool result. Verified in a working builder. In a trial call a model turn with no text and no tool call produced the error event "The model returned no speakable content".
+220: 
+221: A tool is available only in the nodes that list it. Seen in a trial call: the model called a tool that the current node did not list. The result was the text "The function `<name>` is not currently available."
+222: 
+223: ## `response_mapping`
+224: 
+225: `response_mapping` copies values from a call result into named variables. It needs no model call.
+226: 
+227: ```json
+228: {
+229:   "response_mapping": [
+230:     { "path": "data.status", "variable": "order_status" },
+231:     { "path": "data.items", "variable": "items" }
+232:   ]
+233: }
+234: ```
+235: 
+236: | Field | Meaning |
+237: |---|---|
+238: | `path` | Dot path into the tool result |
+239: | `variable` | Name of the variable to set |
+240: 
+241: ### Placement
+242: 
+243: - For a tool in `tools`: inside the tool object, next to `function` and `config`.
+244: - For `pre_actions`: at the **node level**. A `response_mapping` nested inside a `pre_actions` entry is ignored and the variable never appears.
+245: 
+246: `extraction_schema` follows the same placement rule if you use it on a call result.
+247: 
+248: ### Where a result lands (trial findings)
+249: 
+250: Seen in a trial call: the result of an `api_call` is an envelope around the HTTP response.
+251: 
+252: ```json
+253: {
+254:   "status": "success",
+255:   "data": { "ok": true, "verified": true, "attempts_left": 3 },
+256:   "message": "Successfully executed POST request",
+257:   "status_code": 200,
+258:   "header": { "Content-Type": "application/json" }
+259: }
+260: ```
+261: 
+262: `data` is the JSON body the API returned. `header` holds the HTTP response headers.
+263: 
+264: The engine also writes every result into the variable table by itself, flattened with dots. You do not need a mapping for these. For a tool named `check_answer` whose API returned `{"ok": true, "verified": true, "attempts_left": 3}`, the trial call's variable table held:
+265: 
+266: | Variable | Value |
+267: |---|---|
+268: | `check_answer_args.<field>` | Each argument the model sent |
+269: | `check_answer_response.status` | `success` |
+270: | `check_answer_response.data.ok` | `true` (a string) |
+271: | `check_answer_response.data.verified` | `true` (a string) |
+272: | `check_answer_response.data.attempts_left` | `3` |
+273: | `check_answer_response.message` | `Successfully executed POST request` |
+274: | `check_answer_response.status_code` | `200` |
+275: | `check_answer_response.header.<Header-Name>` | One variable per response header |
+276: | `check_answer_status_code` | `200` |
+277: | `check_answer_success_count` | Number of successful calls so far |
+278: 
+279: Each call of the same tool overwrites the previous `_args` and `_response` values.
+280: 
+281: ### Which mapping paths work
+282: 
+283: - **Start the path at the envelope, with `data.`**. If the API returns `{"ok": true}`, map `data.ok`. If it returns `{"products": [...]}`, map `data.products`. Verified in a working builder, on a tool-level mapping and on a node-level mapping.
+284: - A path without the `data.` prefix (for the same body: `ok`) is not confirmed. A smaller example builder uses it. In an early trial call the mapped variables stayed unset and the transitions on them never fired. The mapping paths of that call are not recorded. The builder that passed uses `data.` paths.
+285: - The flattened key can be used directly as a transition variable: `check_answer_response.data.verified`. Verified in a working builder, which tests the mapped variable and the flattened key in the same OR group as a safeguard.
+286: - Booleans arrive as strings. The trial call showed `true` in lower case in the flattened keys. Test both `"true"` and `"True"`, or map a string field.
+287: - A mapped list or object: the exact form it has later inside `vars` is not confirmed. The working builder reads it defensively. It accepts a list, a JSON string, and flattened keys.
+288: 
+289: ## Routing on tool results
+290: 
+291: Routing runs again after a tool result arrives. A transition on a result variable fires in the same turn, before any further model turn. Seen in a trial call.
+292: 
+293: ```json
+294: {
+295:   "transitions": [
+296:     {
+297:       "target_node": "load_order",
+298:       "description": "The check passed",
+299:       "condition": {
+300:         "logic": "or",
+301:         "conditions": [
+302:           { "variable": "check_passed", "operator": "equals", "operand": "true" },
+303:           { "variable": "check_passed", "operator": "equals", "operand": "True" },
+304:           { "variable": "check_answer_response.data.verified", "operator": "equals", "operand": "true" },
+305:           { "variable": "check_answer_response.data.verified", "operator": "equals", "operand": "True" }
+306:         ]
+307:       }
+308:     }
+309:   ]
+310: }
+311: ```
+312: 
+313: Rules:
+314: 
+315: - On a passthrough node, end with an `always` transition so that a failed or empty response does not deadlock.
+316: - Use a tool result to leave a conversation node. The pattern "a closing tool sets a variable, a transition on that variable leads to an `end_call` node" is verified in a working builder.
+317: - To leave a node that carries out an action, do not re-test the user's earlier intent with `matches_intent`. The router looks at the latest user message and can route away before the tool was called. Extract a follow-up enum with a default such as `stay`, and branch with `equals`.
+318: 
+319: ### Success and failure counters
+320: 
+321: The engine keeps two integer variables per call target. No mapping is needed.
+322: 
+323: | Placement | Variables |
+324: |---|---|
+325: | `pre_actions` node | `<nodeId>_success_count`, `<nodeId>_failure_count` |
+326: | Tool in `tools` with handler `api_call` | `<toolName>_success_count`, `<toolName>_failure_count` |
+327: 
+328: Seen in a trial call: `check_answer_success_count` was `2` after two successful calls, and a code node named `setup` produced `setup_success_count` with the value `1`.
+329: 
+330: ```json
+331: {
+332:   "transitions": [
+333:     { "target_node": "give_up", "description": "The lookup failed three times", "condition": { "logic": "or", "conditions": [ { "variable": "lookup_order_failure_count", "operator": "greater_than", "operand": 2 } ] } },
+334:     { "target_node": "ask_again", "description": "always", "condition": { "operator": "always" } }
+335:   ]
+336: }
+337: ```
+338: 
+339: ### `suppress_tool_results`
+340: 
+341: A node-level boolean for nodes that run API calls. With `true` the dialogue model sees only a short `{status: "success"}` summary in place of the raw response. Variables are still mapped and routing still sees them. Use it for large responses, or when the mapped variables already hold everything the model needs.
+342: 
+343: ### Background tools
+344: 
+345: A tool with `"config": {"interruptible": false}` runs in the background. A user interruption does not cancel it. Its result arrives one or more turns later. The mapped variables, the `_response` keys and the counters are filled as usual, but not in the same turn. A transition that reads them right after the call can find them unset. Gate on the variable with `is_set`.
+346: 
+347: ## Retries and timeouts
+348: 
+349: | Setting | Where | Default | What it does |
+350: |---|---|---|---|
+351: | `timeoutMs` | `config` | not documented | Time limit of one attempt, in milliseconds |
+352: | `maxRetries` | `config` | not documented | Tool-level retries after a failed response |
+353: | `connect_retries` | `parameters.properties`, as a baked parameter | `2` | Retries when the connection could not be established |
+354: | `timeout_ms` | `code_exec` parameter | `30000` | Time limit of a code snippet |
+355: 
+356: `connect_retries` in detail:
+357: 
+358: - It retries only failures to establish the connection: connection refused, or reset during the TCP or TLS handshake. The request never reached the server, so a repeat is safe even for POST.
+359: - HTTP error statuses and timeouts are not retried by it.
+360: - Hard cap `5`. `0` means a single attempt.
+361: - Back-off is 150 ms times the attempt number, with a new connection each time.
+362: - All attempts share one 30 second budget for the request.
+363: - Declare it next to `url` and `method`: `"connect_retries": {"type": "number", "default": 0}`. It is not a `config` field.
+364: 
+365: The working builder sets `maxRetries` to `0` on tools that write data and to `2` on its read-only `pre_actions` call. A retried write can record the same thing twice if the API is not idempotent.
+366: 
+367: ## Pre and post Python hooks
+368: 
+369: An `api_call` tool can carry two Python snippets. They run on the server, in a sandbox, right before and right after the call. They are top-level fields of the tool object.
+370: 
+371: ```json
+372: {
+373:   "type": "function",
+374:   "config": { "timeoutMs": 10000, "maxRetries": 0 },
+375:   "function": {
+376:     "name": "check_answer",
+377:     "handler": "__function__:api_call",
+378:     "description": "Check one answer. CALL it every time the caller answers the question.",
+379:     "parameters": {
+380:       "type": "object",
+381:       "properties": {
+382:         "url": { "type": "string", "default": "https://api.example.com/v1/check_answer" },
+383:         "method": { "type": "string", "default": "POST" },
+384:         "body": { "type": "object", "properties": { "answer": { "type": "string", "description": "The caller's answer", "default": "{{answer}}" } }, "required": ["answer"] }
+385:       }
+386:     }
+387:   },
+388:   "pre_process_code": "vars['member_code'] = str(vars.get('member_code') or '').strip().upper()",
+389:   "post_process_code": "try:\n    if isinstance(result, dict):\n        result.pop('header', None)\n        d = result.get('data')\n        if isinstance(d, dict):\n            d['what_to_do_next'] = 'Ask the next question.' if d.get('verified') else 'Ask the same question again.'\nexcept Exception:\n    pass\n"
+390: }
+391: ```
+392: 
+393: | Hook | Names available | Use |
+394: |---|---|---|
+395: | `pre_process_code` | `vars`: mutable dict that fills the `{{var}}` placeholders of the request. `config`: the substituted request with `url`, `method`, `headers`, `body` | Clean a value, or rewrite the whole request |
+396: | `post_process_code` | `result`: the tool result, mutable | Reshape, shorten or extend the result |
+397: 
+398: Documented behaviour:
+399: 
+400: - The post-hook runs before `response_mapping` and extraction see the result.
+401: - An empty or whitespace-only string means no hook.
+402: - Hooks are honoured only on `api_call` tools (and on the integration and knowledge search handlers). The platform removes them from any other handler when the workflow is saved.
+403: - In a pre-hook, setting `config['body']` to a string sends that string as the raw body, with no JSON encoding. Set the `Content-Type` header yourself in that case.
+404: 
+405: ### What `result` looks like in a post-hook
+406: 
+407: The internal reference shows `result` as the response body. A working builder shows otherwise. Verified in a working builder:
+408: 
+409: - For an `api_call`, `result` is the envelope described above: a dict with `status`, `data`, `message`, `status_code` and `header`. The API's JSON body is `result["data"]`.
+410: - A key that the hook adds inside `result["data"]` reaches the dialogue model as part of the tool result. The working builder adds a `what_to_do_next` sentence there, and its prompt tells the model to obey it.
+411: - `result.pop("header", None)` removes the response headers. The working builder does this on every tool, so that headers do not take up space in the model's context.
+412: - Mapping paths still start with `data.` when a post-hook is present.
+413: 
+414: The working builder writes every hook inside `try` and `except Exception: pass` and checks types with `isinstance` before use. What the platform does when a hook raises is not documented.
+415: 
+416: Seen in a test on 10 October: a post-hook can read call variables and write new variables, and a later pre-hook reads them. Not confirmed: whether a change to `result` also changes the flattened `<tool>_response.*` variables.
+417: 
+418: ## Code nodes and `code_exec`
+419: 
+420: A `code` node runs a Python snippet when it is entered. The snippet is a `code_exec` function in `pre_actions`.
+421: 
+422: ```json
+423: {
+424:   "name": "compute_delivery",
+425:   "node_type": "code",
+426:   "passthrough": true,
+427:   "passthrough_default_transition": "tell_delivery",
+428:   "on_enter": { "type": "silent" },
+429:   "pre_actions": [
+430:     {
+431:       "type": "function",
+432:       "function": {
+433:         "name": "code_exec",
+434:         "handler": "__function__:code_exec",
+435:         "parameters": {
+436:           "type": "object",
+437:           "properties": {
+438:             "code": { "type": "string", "default": "import datetime\ntry:\n    start = datetime.date.fromisoformat(str(vars.get('shipped_on'))[:10])\n    eta = start + datetime.timedelta(days=3)\n    vars['delivery_day'] = eta.isoformat()\n    vars['delivery_state'] = 'known'\nexcept Exception:\n    vars['delivery_day'] = ''\n    vars['delivery_state'] = 'unknown'\n" },
+439:             "timeout_ms": { "type": "number", "default": 10000 }
+440:           }
+441:         }
+442:       }
+443:     }
+444:   ],
+445:   "transitions": [
+446:     { "target_node": "tell_delivery", "description": "always", "condition": { "operator": "always" } }
+447:   ]
+448: }
+449: ```
+450: 
+451: | Parameter | Meaning |
+452: |---|---|
+453: | `code` | The Python source, as a baked `default` string |
+454: | `timeout_ms` | Time limit in milliseconds. Default `30000` |
+455: 
+456: ### Reading and writing variables
+457: 
+458: - The snippet gets a dict named `vars`. It holds the current workflow variables.
+459: - Read with `vars.get("name")`. A variable that was never set is absent.
+460: - Write with `vars["name"] = value`. Every key the snippet assigns becomes a workflow variable.
+461: 
+462: Verified in a working builder:
+463: 
+464: - Call variables are in `vars`. The builder reads `vars.get("now")`, a call variable passed with the simulation.
+465: - The result of an earlier `api_request` node is reachable from `vars` in a later code node. The builder looks for it under the mapped variable name first and under the flattened result keys second. Which of the two held the data is not recorded.
+466: - A string written to `vars["date_facts"]` in a code node resolves as `{{date_facts}}` in the `task_message` of later conversation nodes. Multi-line strings work.
+467: - The standard modules `json`, `re` and `datetime` can be imported.
+468: - The same snippet can run in two code nodes at different points of the call. The later run sees the variables added in between.
+469: 
+470: ### What a code node returns
+471: 
+472: Seen in a trial call: the result of a successful `code_exec` is
+473: 
+474: ```json
+475: { "status": "success", "data": null, "message": "Code executed successfully", "status_code": 200 }
+476: ```
+477: 
+478: The snippet's output is not in `data`. Its values reach the workflow only through `vars`. After a code node named `setup` ran, the variable table held:
+479: 
+480: | Variable | Value |
+481: |---|---|
+482: | each key the snippet wrote, for example `date_facts` | the value, with source `tool_result` and source node `setup` |
+483: | `setup_response.status` | `success` |
+484: | `setup_response.data` | `null` |
+485: | `setup_response.message` | `Code executed successfully` |
+486: | `setup_response.status_code` | `200` |
+487: | `setup_status_code` | `200` |
+488: | `setup_success_count` | `1` |
+489: 
+490: For a code node the automatic keys are named after the **node**, not after `code_exec`.
+491: 
+492: ### Rules for snippets
+493: 
+494: - **Do not write `{{` or `}}` in the code.** The internal sources disagree on whether the `code` field is templated. One says it is exempt. Another says placeholders are resolved when the code runs and an unset one is left as literal text, which breaks the Python. The working builder removes every `{{` and `}}` from generated code (a nested dict literal such as `{'a': {'b': 1}}` ends in `}}`) and reads all values from `vars`.
+495: - **Never let a snippet raise.** Wrap the body in `try` and `except`, and write a fallback value for every variable that a later prompt or condition reads. A prompt that references an unset variable shows the literal placeholder to the model.
+496: - **Write strings for routing flags**, such as `known` and `unknown`. Do not route on a Python boolean. See "Do not route on a boolean" in workflow-format.md.
+497: - Keep snippets fast. They block the conversation.
+498: - Do arithmetic, date calculation and counting in code, and give the model the finished facts as text. Verified in a working builder: it computes a block of date facts in a code node and places it in the prompts.
+499: - Treat a code node like an API node: `passthrough: true`, a `passthrough_default_transition`, and a last `always` transition.
+500: 
+501: ### Sandbox limits
+502: 
+503: | Limit | Value |
+504: |---|---|
+505: | Time | `timeout_ms`, default `30000` |
+506: | Modules | `json`, `re` and `datetime` are verified in a working builder. The full list is not documented |
+507: | Network and file access | Not documented |
+508: | Memory and output size | Not documented |
+509: 
+510: ### `code_exec` as a tool
+511: 
+512: `code_exec` can also be a tool in the `tools` array of a conversation node, called by the model. Its parameters are top-level arguments, declared without `default` so the model fills them. For such a tool the `code` field resolves `{{var}}` when the tool is called, against the current variable table. The working builder does not use this form, so nothing about it is verified here.
+513: 
+514: ## Lifecycle tools
+515: 
+516: A tool whose `config.alwaysRunsAt` is a non-empty list is never shown to the model. The engine fires it at a fixed point of the call.
+517: 
+518: | Value | When |
+519: |---|---|
+520: | `start_of_call` | During call setup, before the first turn |
+521: | `end_of_call` | After the call has ended |
+522: | `each_turn` | Accepted by the schema but not implemented. It never fires |
+523: 
+524: Put a lifecycle tool that must run on every call into the workflow's top-level `tools` array.
+525: 
+526: ```json
+527: {
+528:   "initial_node": "greeting",
+529:   "nodes": {},
+530:   "tools": [
+531:     {
+532:       "type": "function",
+533:       "config": { "alwaysRunsAt": ["end_of_call"] },
+534:       "function": {
+535:         "name": "push_call_result",
+536:         "handler": "__function__:api_call",
+537:         "parameters": {
+538:           "type": "object",
+539:           "properties": {
+540:             "url": { "type": "string", "default": "https://api.example.com/v1/call-results" },
+541:             "method": { "type": "string", "default": "POST" },
+542:             "body": {
+543:               "type": "object",
+544:               "properties": {
+545:                 "summary": { "type": "string", "default": "{{call.analysis.summary}}" },
+546:                 "reason": { "type": "string", "default": "{{call.call_end_reason}}" }
+547:               }
+548:             }
+549:           }
+550:         }
+551:       }
+552:     }
+553:   ]
+554: }
+555: ```
+556: 
+557: Rules:
+558: 
+559: - A workflow-level tool without `alwaysRunsAt` never runs and the model never sees it.
+560: - A lifecycle tool in a node's `tools` runs for `start_of_call` only on the `initial_node`, and for `end_of_call` only on the node in which the call ended.
+561: - If a `{{var}}` parameter is still unresolved, one model call fills the parameters. If everything resolves, the handler runs directly.
+562: - `response_mapping` is applied for `start_of_call`. It is not applied for `end_of_call`.
+563: - At the end of a call the order is: c
+[Output truncated. Narrow the query or read a smaller range.]
+  [Read] {"file_path": "tools/workflow_parts.py", "offset": 1, "limit": 600}
+1: """Freya schema constructors. Policy, paths, values and branch choices come from input sources.
+2: 
+3: Import these from a builder-generated Python script, then json.dump the graph.
+4: These helpers do not infer business rules, attach services automatically, or alter exports.
+5: """
+6: from copy import deepcopy
+7: 
+8: 
+9: def api_tool(name, url, method, body=None, mapping=None, description="", timeout_ms=30000):
+10:     """body is a JSON Schema object from the contract, with runtime/default bindings."""
+11:     if not url.startswith(("https://", "http://")) or method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+12:         raise ValueError("Provide the actual source URL and HTTP method")
+13:     if body is not None and (not isinstance(body, dict) or body.get("type") != "object"):
+14:         raise ValueError("body must be an object schema, not a payload string")
+15:     properties = {
+16:         "url": {"type": "string", "default": url},
+17:         "method": {"type": "string", "default": method},
+18:         "headers": {"type": "object", "properties": {"Content-Type": {"type": "string", "default": "application/json"}}},
+19:     }
+20:     if body is not None:
+21:         properties["body"] = deepcopy(body)
+22:     tool = {"type": "function", "config": {"timeoutMs": timeout_ms}, "function": {
+23:         "name": name, "handler": "__function__:api_call", "description": description,
+24:         "parameters": {"type": "object", "properties": properties}}}
+25:     if mapping:
+26:         tool["response_mapping"] = deepcopy(mapping)
+27:     return tool
+28: 
+29: 
+30: def end_node(name, message=""):
+31:     """A real hang-up, independent of any bank record/close API."""
+32:     properties = {"message_mode": {"type": "string", "default": "custom" if message else "none"}}
+33:     if message:
+34:         properties["spoken_message"] = {"type": "string", "default": message}
+35:     return {"name": name, "node_type": "end_call", "on_enter": {"type": "silent"},
+36:             "disable_inactivity_monitor": True, "transitions": [], "terminal": {
+37:                 "type": "function", "function": {"name": name, "handler": "__function__:end_call",
+38:                 "parameters": {"type": "object", "properties": properties}}}}
+39: 
+40: 
+41: def action_node(name, tool, transitions, fallback):
+42:     """Run an action on entry; caller supplies response-dependent routes and fallback."""
+43:     action = deepcopy(tool)
+44:     mapping = action.pop("response_mapping", None)
+45:     if not fallback:
+46:         raise ValueError("Action nodes need a fallback branch derived from the source")
+47:     routes = deepcopy(transitions)
+48:     if not routes or routes[-1].get("condition", {}).get("operator") != "always":
+49:         routes.append({"target_node": fallback, "description": "Fallback after action result", "condition": {"operator": "always"}})
+50:     node = {"name": name, "node_type": "api_request", "on_enter": {"type": "silent"},
+51:             "passthrough": True, "passthrough_default_transition": fallback,
+52:             "pre_actions": [action], "transitions": routes}
+53:     if mapping:
+54:         node["response_mapping"] = mapping
+55:     return node
+  [Bash] {"command": "ls; ls tools out examples docs; ls \"cases/Build the Builder - Final Case/test-environment\"", "timeout": 20000}
+{"exit_code": 0, "stdout": "README.md\nSUBMISSION.md\nVERSION\n__pycache__\nbriefs\ncases\ncloudflare-worker\ndocs\nenv.example\nenv.sh\nexamples\nfreya.py\nmy-agents\nmy-skills\nout\npublic-test-set.json\nrequirements-builder.txt\nresults\nreview\nsubmission-config.example.json\nsubmission-config.json\nsubmissions\ntools\ntraces\ndocs:\napi.md\ntools-and-code.md\nworkflow-format.md\n\nexamples:\nagent_builder.py\nbase-agent.json\n\nout:\nbrief-a.requirements.json\nbrief-a.save.out\nbrief-a.workflow.json\nbrief-b.requirements.json\nbrief-b.workflow.json\nbuild\n\ntools:\n__pycache__\naudit_workflow.py\ncheck_builder_models.py\ncheck_claude_models.py\ncheck_saved_workflow.py\nopenapi.json\nreview_failures.py\nrun_cases.py\nrun_scenarios.py\nscore.py\ntest_evidence.py\nworkflow_parts.py\ntest-customers.json\ntest-customers.md\n", "stderr": ""}
+  [Read] {"file_path": "docs/workflow-format.md", "offset": 590, "limit": 400}
+590:   "task_message": "Tell the caller the order status in one sentence. Then ask whether they want to change the delivery address, cancel the order, or end the call.",
+591:   "extraction_schema": [
+592:     {
+593:       "name": "next_action",
+594:       "type": "string",
+595:       "enum_values": ["change_address", "cancel", "done"],
+596:       "description": "What the caller chose. Empty if unclear.",
+597:       "min_confidence": 0.7
+598:     }
+599:   ],
+600:   "transitions": [
+601:     { "target_node": "change_address", "description": "Change address", "condition": { "logic": "or", "conditions": [ { "variable": "next_action", "operator": "equals", "operand": "change_address" } ] } },
+602:     { "target_node": "cancel_order", "description": "Cancel", "condition": { "logic": "or", "conditions": [ { "variable": "next_action", "operator": "equals", "operand": "cancel" } ] } },
+603:     { "target_node": "goodbye", "description": "Done", "condition": { "logic": "or", "conditions": [ { "variable": "next_action", "operator": "equals", "operand": "done" } ] } },
+604:     { "target_node": "menu", "description": "Unclear, stay", "condition": { "operator": "always" } }
+605:   ]
+606: }
+607: ```
+608: 
+609: Use extraction for user speech. For API responses use `response_mapping` (tools-and-code.md). It is deterministic and needs no model call.
+610: 
+611: ## End-call nodes
+612: 
+613: An `end_call` node hangs up. It has a `terminal` object and no outgoing transitions.
+614: 
+615: ```json
+616: {
+617:   "name": "goodbye",
+618:   "node_type": "end_call",
+619:   "on_enter": { "type": "silent" },
+620:   "disable_inactivity_monitor": true,
+621:   "transitions": [],
+622:   "terminal": {
+623:     "type": "function",
+624:     "function": {
+625:       "name": "closing_end",
+626:       "handler": "__function__:end_call",
+627:       "parameters": {
+628:         "type": "object",
+629:         "properties": {
+630:           "message_mode": { "type": "string", "default": "custom" },
+631:           "spoken_message": { "type": "string", "default": "Thank you for calling. Goodbye." }
+632:         }
+633:       }
+634:     }
+635:   }
+636: }
+637: ```
+638: 
+639: | Parameter | Meaning |
+640: |---|---|
+641: | `message_mode` | `custom`: say `spoken_message`. `llm`: the model writes the farewell from `llm_prompt`. `none`: hang up without a farewell |
+642: | `spoken_message` | The fixed farewell for `custom`. `{{var}}` works |
+643: | `llm_prompt` | The instruction for `llm` |
+644: | `interruptible` | `true` opens a short window after the farewell in which the user can still speak. Default: hang up as soon as the agent stops speaking |
+645: | `trigger_timeout` | Length of that window in seconds |
+646: | `trigger_pattern_both` | Farewell phrases, separated by `\|`, that do not cancel the close. Anything else the user says in the window cancels the close and returns the turn to the agent |
+647: 
+648: Rules:
+649: 
+650: - **The farewell comes from the terminal, not from `on_enter`.** A node with an `on_enter` line and `message_mode: "none"` hangs up silently. Put the sentence in `spoken_message` and set `on_enter` to `{"type": "silent"}`.
+651: - Set `disable_inactivity_monitor` to `true` and `transitions` to `[]`.
+652: - **The call's `endedReason` is the terminal's `function.name`.** The node name does not affect it. Pick a name that describes the outcome.
+653: - Use several end-call nodes with different farewells and function names when outcomes differ.
+654: - If you set `interruptible`, also set `trigger_pattern_both`. Without a phrase list every polite reply cancels the hang-up. The window is timed on a wall clock and a chat simulation cannot measure it.
+655: 
+656: Verified in a working builder: `message_mode: "none"` with a silent `on_enter` ends the call when the node is reached. The agent says its goodbye in the previous conversation node.
+657: 
+658: ## Limits
+659: 
+660: | Limit | Default | Notes |
+661: |---|---|---|
+662: | `max_node_turns` | `10` | Cap on user turns in one node. Only user messages count. Tool results and agent messages do not. There is no "unlimited" value |
+663: | `max_turn_transition` | none | Where to go when the cap is reached. Without it the engine records the overrun and continues with normal routing, so the cap changes nothing |
+664: | `truncation_strategy` | `keep_all` | `keep_all`: full history. `keep_recent`: system message plus the last `truncation_window_size` messages. `summarize`: older messages are replaced by a model-written summary |
+665: | `truncation_window_size` | `10` | Used by `keep_recent` and `summarize` |
+666: | Extraction `min_confidence` | `0.95` | See "Extraction schema" |
+667: | Code `timeout_ms` | `30000` | See tools-and-code.md |
+668: 
+669: Notes:
+670: 
+671: - Truncation applies to the dialogue model only. Extraction and routing run before it.
+672: - Give every node that sets `max_node_turns` a `max_turn_transition`. The working builder sets `max_node_turns` to 60 and 80 on its conversation nodes without a `max_turn_transition`. Its calls ended well below those counts, so the behaviour at the cap is not confirmed by it.
+673: - Size the cap from real conversations. A node that handles a whole call can need dozens of user turns.
+674: - The maximum call length in a simulation is set with `maxCallDurationSeconds` (api.md).
+675: 
+676: ## Design rules
+677: 
+678: - Use `snake_case` node keys that describe the step.
+679: - Keep dialogue in `task_message`, routing in `transitions`, data capture in `extraction_schema`.
+680: - Every path must reach an `end_call` node.
+681: - Put deterministic conditions before `matches_intent` conditions.
+682: - Every passthrough node ends with an `always` transition.
+683: - A transition back to an earlier node is supported.
+684: - Split a step into its own node when it has strict rules of its own or forms a clear state. Keep related optional actions together in one conversation node with several tools.
+685: 
+686: ## Complete example
+687: 
+688: A clinic assistant. It collects a service and a day, looks up free slots, lets the model book one with a tool, and ends the call.
+689: 
+690: ```json
+691: {
+692:   "initial_node": "collect",
+693:   "system_prompt": "You are the phone assistant of a dental clinic. Speak English. Keep every turn to one or two short sentences.",
+694:   "test_variables": { "patient_id": "p_test", "first_name": "Dana" },
+695:   "global_nodes": {},
+696:   "nodes": {
+697:     "collect": {
+698:       "name": "collect",
+699:       "node_type": "conversation",
+700:       "on_enter": { "type": "tts", "text": "Hello {{first_name}}, this is the clinic. Which treatment would you like to book, and on which day?" },
+701:       "on_enter_first_entry_only": true,
+702:       "task_message": "Find out which treatment the caller wants (checkup, cleaning or filling) and on which day. Ask one question at a time. Do not call a tool in this turn.",
+703:       "extraction_schema": [
+704:         { "name": "treatment", "type": "string", "enum_values": ["checkup", "cleaning", "filling"], "description": "Treatment the caller wants", "min_confidence": 0.7 },
+705:         { "name": "wanted_day", "type": "date", "description": "Day the caller wants the appointment", "min_confidence": 0.7 }
+706:       ],
+707:       "max_node_turns": 12,
+708:       "max_turn_transition": "goodbye_no_booking",
+709:       "transitions": [
+710:         {
+711:           "target_node": "find_slots",
+712:           "description": "Treatment and day are known",
+713:           "condition": {
+714:             "logic": "or",
+715:             "conditions": [
+716:               {
+717:                 "logic": "and",
+718:                 "conditions": [
+719:                   { "variable": "treatment", "operator": "is_set" },
+720:                   { "variable": "wanted_day", "operator": "is_set" }
+721:                 ]
+722:               }
+723:             ]
+724:           }
+725:         },
+726:         { "target_node": "collect", "description": "Keep collecting", "condition": { "operator": "always" } }
+727:       ]
+728:     },
+729:     "find_slots": {
+730:       "name": "find_slots",
+731:       "node_type": "api_request",
+732:       "passthrough": true,
+733:       "passthrough_default_transition": "offer",
+734:       "on_enter": { "type": "silent" },
+735:       "disable_inactivity_monitor": true,
+736:       "pre_actions": [
+737:         {
+738:           "type": "function",
+739:           "config": { "timeoutMs": 10000, "maxRetries": 2 },
+740:           "function": {
+741:             "name": "find_slots",
+742:             "handler": "__function__:api_call",
+743:             "description": "Get free slots for a day.",
+744:             "parameters": {
+745:               "type": "object",
+746:               "properties": {
+747:                 "url": { "type": "string", "default": "https://api.example.com/v1/slots" },
+748:                 "method": { "type": "string", "default": "POST" },
+749:                 "headers": { "type": "object", "properties": { "Content-Type": { "type": "string", "default": "application/json" } } },
+750:                 "body": {
+751:                   "type": "object",
+752:                   "properties": {
+753:                     "treatment": { "type": "string", "default": "{{treatment}}" },
+754:                     "day": { "type": "string", "default": "{{wanted_day}}" }
+755:                   }
+756:                 }
+757:               }
+758:             }
+759:           }
+760:         }
+761:       ],
+762:       "response_mapping": [
+763:         { "path": "data.slots_text", "variable": "slots_text" }
+764:       ],
+765:       "transitions": [
+766:         { "target_node": "goodbye_no_booking", "description": "The lookup failed", "condition": { "logic": "or", "conditions": [ { "variable": "find_slots_failure_count", "operator": "greater_than", "operand": 0 } ] } },
+767:         { "target_node": "offer", "description": "always", "condition": { "operator": "always" } }
+768:       ]
+769:     },
+770:     "offer": {
+771:       "name": "offer",
+772:       "node_type": "conversation",
+773:       "task_message": "Free slots: {{slots_text}}\n\nOffer the earliest slot. If the caller refuses it, offer the next one. When the caller accepts a slot, read back the treatment, the day and the time and wait for a clear yes. Then CALL book_appointment. Saying that it is booked is not enough. After the tool result, tell the caller whether the booking worked and say goodbye.",
+774:       "tools": [
+775:         {
+776:           "type": "function",
+777:           "config": { "timeoutMs": 10000, "maxRetries": 0 },
+778:           "function": {
+779:             "name": "book_appointment",
+780:             "handler": "__function__:api_call",
+781:             "description": "Book one slot. CALL it only after the caller confirmed the read-back.",
+782:             "parameters": {
+783:               "type": "object",
+784:               "properties": {
+785:                 "url": { "type": "string", "default": "https://api.example.com/v1/bookings" },
+786:                 "method": { "type": "string", "default": "POST" },
+787:                 "headers": { "type": "object", "properties": { "Content-Type": { "type": "string", "default": "application/json" } } },
+788:                 "body": {
+789:                   "type": "object",
+790:                   "properties": {
+791:                     "patient_id": { "type": "string", "default": "{{patient_id}}" },
+792:                     "treatment": { "type": "string", "default": "{{treatment}}" },
+793:                     "slot_time": { "type": "string", "description": "Start time of the accepted slot, HH:MM, 24 hour", "default": "{{slot_time}}" }
+794:                   },
+795:                   "required": ["slot_time"]
+796:                 }
+797:               }
+798:             }
+799:           },
+800:           "response_mapping": [
+801:             { "path": "data.booking_id", "variable": "booking_id" }
+802:           ]
+803:         }
+804:       ],
+805:       "max_node_turns": 20,
+806:       "max_turn_transition": "goodbye_no_booking",
+807:       "transitions": [
+808:         { "target_node": "goodbye_booked", "description": "The booking was recorded", "condition": { "logic": "or", "conditions": [ { "variable": "booking_id", "operator": "is_set" } ] } },
+809:         { "target_node": "goodbye_no_booking", "description": "The caller does not want any slot", "condition": { "operator": "matches_intent", "description": "The caller refused all offered slots or does not want to book" } }
+810:       ]
+811:     },
+812:     "goodbye_booked": {
+813:       "name": "goodbye_booked",
+814:       "node_type": "end_call",
+815:       "on_enter": { "type": "silent" },
+816:       "disable_inactivity_monitor": true,
+817:       "transitions": [],
+818:       "terminal": {
+819:         "type": "function",
+820:         "function": {
+821:           "name": "booked",
+822:           "handler": "__function__:end_call",
+823:           "parameters": { "type": "object", "properties": { "message_mode": { "type": "string", "default": "none" } } }
+824:         }
+825:       }
+826:     },
+827:     "goodbye_no_booking": {
+828:       "name": "goodbye_no_booking",
+829:       "node_type": "end_call",
+830:       "on_enter": { "type": "silent" },
+831:       "disable_inactivity_monitor": true,
+832:       "transitions": [],
+833:       "terminal": {
+834:         "type": "function",
+835:         "function": {
+836:           "name": "no_booking",
+837:           "handler": "__function__:end_call",
+838:           "parameters": {
+839:             "type": "object",
+840:             "properties": {
+841:               "message_mode": { "type": "string", "default": "custom" },
+842:               "spoken_message": { "type": "string", "default": "No appointment was booked. You can call us again at any time. Goodbye." }
+843:             }
+844:           }
+845:         }
+846:       }
+847:     }
+848:   }
+849: }
+850: ```
+851: 
+852: What the example shows:
+853: 
+854: | Node | Feature |
+855: |---|---|
+856: | `collect` | Fixed opening line, extraction with a `date` type, AND group, self-transition, turn cap with a target |
+857: | `find_slots` | Passthrough `api_request` node, baked parameters, node-level `response_mapping`, failure counter, `always` fallback |
+858: | `offer` | A tool the model calls, a model-filled body field, tool-level `response_mapping`, routing on the mapped variable |
+859: | `goodbye_booked`, `goodbye_no_booking` | Two end-call nodes with different `endedReason` values |
+  [Read] {"file_path": "docs/tools-and-code.md", "offset": 560, "limit": 300}
+560: - A lifecycle tool in a node's `tools` runs for `start_of_call` only on the `initial_node`, and for `end_of_call` only on the node in which the call ended.
+561: - If a `{{var}}` parameter is still unresolved, one model call fills the parameters. If everything resolves, the handler runs directly.
+562: - `response_mapping` is applied for `start_of_call`. It is not applied for `end_of_call`.
+563: - At the end of a call the order is: call analysis, then `end_of_call` tools, then success-criteria judging. An `end_of_call` tool can use `{{call.analysis.summary}}`, `{{call.analysis.structured_data_str}}`, `{{call.call_end_reason}}`, `{{call.call_end_reason_category}}`, `{{call.call_tags}}` and `{{call.duration}}`.
+564: - A malformed lifecycle tool is dropped at run time without an error. Validate with a dry run (api.md).
+565: 
+566: ## Tool results and the next turn
+567: 
+568: After a tool call returns, the model sees the result and has to produce the next turn itself. Two things were seen in practice runs with the hackathon's agent model:
+569: 
+570: - **The agent says nothing after the tool call.** The result arrives, no assistant message follows, and the simulated customer hangs up after waiting. It happens more often when the result is bare data such as `{"ok": true, "verified": true}`.
+571: - **The agent ignores a negative result.** For example it reads `"verified": false` and moves on to the next question as if the answer had passed.
+572: 
+573: What fixed both in a working builder (verified, see the post-hook section above): a post-hook on the tool that adds one plain instruction line to the result before the model sees it, for example a `what_to_do_next` field that says what the answer means and what to say or call next. The model then has something to act on.
+574: 
+575: Also say it in the step's prompt: after every tool result, speak to the customer or call the next tool. Never end a turn with nothing.
+576: 
+577: ## Checklist
+578: 
+579: - Fixed values use `default`, never `const`.
+580: - Each `api_call` body field is a leaf under `body.properties` with its own `default`, `description` and `enum`.
+581: - `tools` only on `conversation` nodes. `pre_actions` only on `api_request` and `code` nodes.
+582: - `response_mapping` on the tool for `tools`, on the node for `pre_actions`.
+583: - Mapping paths start with `data.`.
+584: - Booleans from results are tested as `"true"` and `"True"`, or replaced by string fields.
+585: - Every passthrough node ends with an `always` transition.
+586: - Code reads and writes through `vars`, never raises, and contains no `{{` or `}}`.
+587: - Tool descriptions say when to call the tool.
+  [Bash] {"command": "ls -R cloudflare-worker | head -30; ls my-agents my-skills results submissions | head -40; sed -n 1,80p tools/run_scenarios.py; python -c \"print(open('SUBMISSION.md').read()[:2500])\"", "timeout": 20000}
+{"exit_code": 0, "stdout": "cloudflare-worker:\nDEPLOY.md\ngenerate_worker.py\nhandler.mjs\npackage.json\nverify_remote.py\nworker.js\nworker.test.mjs\nwrangler.toml\nmy-agents:\n__pycache__\nagent_builder.py\ncase_inputs.py\nclaude_runner.py\nsubmission.py\ntest_builder_tools.py\ntest_case_inputs.py\ntest_submission.py\ntest_workflow_guards.py\n\nmy-skills:\nbuild-phone-agent\n\nresults:\nall-cases.json\nbrief-a-run1.json\nbrief-a-run2.json\nbrief-a-run3.json\nbrief-a-run4.json\nbrief-b-run1.json\nbrief-b-run2-all.json\nbrief-b-run3-words.json\nlog.jsonl\npub01.json\n\nsubmissions:\n20261011-123006-6b6a74fd\n20261011-123238-5dcc2b6d\n20261011-123604-73563ea7\n20261011-124840-ad0d33b6\n20261011-125314-747051ac\n20261011-125824-ad17b3e4\n20261011-125905-3070e938\n20261011-130109-4d740657\n\"\"\"Run case-supplied scenarios without the practice bank's sessions/ledger API.\n\npython tools/run_scenarios.py AGENT_ID --cases out/scenarios.json --out results/scenarios.json\nEach scenario: id, source, who, script, variables, checks (a list of requirements).\nThese are judge-based conversation checks, not the organizer's hidden score.\n\"\"\"\nimport argparse\nimport json\nimport pathlib\nimport sys\nimport time\n\nROOT = pathlib.Path(__file__).resolve().parent.parent\nsys.path.insert(0, str(ROOT))\nimport freya\nfrom tools.test_evidence import record_test\n\n\ndef load_cases(path):\n    cases = json.loads(path.read_text(encoding=\"utf-8\"))\n    if not isinstance(cases, list) or not cases:\n        raise ValueError(\"Expected a nonempty scenario list\")\n    ids = set()\n    for case in cases:\n        for field in (\"id\", \"source\", \"who\", \"script\", \"variables\", \"checks\"):\n            if not case.get(field):\n                raise ValueError(f\"Missing {field} in scenario\")\n        if case[\"id\"] in ids or not isinstance(case[\"variables\"], dict) or not isinstance(case[\"checks\"], list):\n            raise ValueError(\"Unique IDs, variable objects and check lists required\")\n        ids.add(case[\"id\"])\n    return cases\n\n\ndef run(agent_id, cases, output):\n    output.parent.mkdir(parents=True, exist_ok=True)\n    personas = [{\"name\": case[\"id\"],\n        \"prompt\": \"Speak only as the customer, in the language required by this scenario. Do not reveal the evaluation criteria or coach the assistant.\\n\"\n                  + case[\"who\"] + \"\\n\" + case[\"script\"],\n        \"successCriteria\": \"Check the complete conversation and available tool calls/results. Do not count a claim as a completed action without tool success.\\n\"\n                           + \"\\n\".join(case[\"checks\"]), \"tags\": [\"builder-case-tests\"]} for case in cases]\n    created = freya.create_personas(personas)[\"personas\"]\n    if len(created) != len(cases):\n        raise RuntimeError(\"Persona count mismatch\")\n    started = time.monotonic()\n    sim, iteration, status = freya.run_simulation(agent_id, \"case scenarios\", {\n        persona[\"id\"]: case[\"variables\"] for persona, case in zip(created, cases)})\n    verdicts = {row[\"personaId\"]: row for row in freya.get_iteration(sim, iteration)[\"runs\"]}\n    report = {\"agent_id\": agent_id, \"simulation_id\": sim, \"iteration_id\": iteration,\n              \"status\": status, \"seconds\": time.monotonic() - started, \"rows\": [],\n              \"evaluation\": \"Conversation judge and captured tool transcript; not the organizer's hidden score\"}\n    for persona, case in zip(created, cases):\n        verdict = verdicts.get(persona[\"id\"], {})\n        row = {\"id\": case[\"id\"], \"source\": case[\"source\"], \"call_id\": verdict.get(\"callId\"),\n               \"pass\": verdict.get(\"outcome\") == \"pass\", \"verdict\": verdict,\n               \"failed\": [] if verdict.get(\"outcome\") == \"pass\" else [verdict.get(\"reason\") or \"No verdict\"]}\n        if row[\"call_id\"]:\n            try:\n                row[\"call\"] = freya.get_call(row[\"call_id\"])\n            except Exception as exc:\n                row[\"pass\"] = False\n                row[\"failed\"].append(f\"Transcript unavailable: {exc}\")\n        else:\n            row[\"pass\"] = False\n            row[\"failed\"].append(\"No call ID; cannot verify transcript\")\n        report[\"rows\"].append(row)\n        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding=\"utf-8\")\n        print(\"PASS\" if row[\"pass\"] else \"FAIL\", case[\"id\"], json.dumps(row[\"failed\"], ensure_ascii=False), flush=True)\n    report[\"passed\"] = sum(row[\"pass\"] for row in report[\"rows\"])\n    report[\"total\"] = len(cases)\n    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding=\"utf-8\")\n    record_test(report)\n    print(f\"{report['passed']}/{len(cases)} passed; full reasons and transcripts: {output}\", flush=True)\n    return report\n\n\nif __name__ == \"__main__\":\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\"agent_id\")\n    parser.add_argument(\"--cases\", required=True, type=pathlib.Path)\n    parser.add_argument(\"--out\", required=True, type=pathlib.Path)\n# Submission\n\nThe final briefs arrive Sunday, October 11, 2026 at 17:00 UTC (10:00 AM Los Angeles). Submit before 20:00 UTC (1:00 PM Los Angeles). These times come from the supplied organizer instructions.\n\nRun from the kit repository directory with the required API keys already configured. Copy `submission-config.example.json` to `submission-config.json` and fill in `team`, `members` (name and email), `repo`, and `mock_url`. Use the address of your actual mock; no mock is deployed by this packaging code. Commit the builder source and configuration before the final run. Submission mode rejects uncommitted builder source so the recorded commit identifies the code that ran. Generated output and trace changes do not block a run.\n\nThe actual organizer ZIP contains one final case and asks for the singular eight-field form. Deploy and verify the mock first; follow [the deployment guide](cloudflare-worker/DEPLOY.md). Keep the case and configuration inside the repository so the recorded command is portable. Run on the entire folder:\n\n```text\npython my-agents/agent_builder.py \"cases/Build the Builder - Final Case\" --submission\n```\n\nThe builder reads the folder's documents and retains the entire case folder in the input snapshot. A workflow PDF is attached visually only when the case entry documents explicitly identify it as an accompanying workflow. Choose one successful run. The runner applies a 30-minute timeout and packaging rejects an overlong run, including tests. The phone agent may only be repaired during a new builder run, never manually after a run. The builder defaults to GPT-5.4 with high reasoning; `--model` overrides the builder only, never the event's Freya phone model.\n\nThe required package is `submission.json`, the exported workflow, and the builder's trace. Each successful `--submission` run creates these together in `submissions/<run-id>/`:\n\n- `agent-1.workflow.json`: the platform agent exported automatically through `freya.export_workflow` after building and testing finish.\n- `trace.jsonl`: complete streamed SDK events, tool calls/results, start/end time, usage, and exported workflow/agent IDs.\n- `submission.json`: exactly the organizer's eight fields: `team`, `members`, `repo`, `commit`, `run_command`, `workflow`, `trace`, and `mock_url`. The workflow and trace paths are relative to the repository root, not to the JSON file. The commit is captured before the run; the command uses repository-relative input paths and runs from the repository root \n", "stderr": ""}
+  [Bash] {"command": "date; grep -n -i \"idle\\|inactiv\\|silence\" docs/api.md docs/workflow-format.md | head -20; ls out/build | head; python - <<'E'\nimport json\nd=json.load(open('cases/Build the Builder - Final Case/test-environment/test-customers.json',encoding='utf-8'))\nprint(d.keys() if isinstance(d,dict) else type(d))\ncs=d['customers']\nprint(len(cs))\nimport collections\nfor c in cs:\n    s=c['services']\n    for k,v in s.items():\n        if k in('statement.week.change','statement.pdf.send','statement.week.decide'):\n            pass\nc=cs[0]; print(json.dumps(c,ensure_ascii=False)[:3000])\nE", "timeout": 20000}
+{"exit_code": 1, "stdout": "Sun Oct 11 13:03:16 PST 2026\ndocs/workflow-format.md:109:| `disable_inactivity_monitor` | boolean | `false` | Switch off silence check-ins for this node |\ndocs/workflow-format.md:115:A per-node `idle_config` (silence timeouts) and per-node speech settings also exist. They matter on voice calls only.\ndocs/workflow-format.md:620:  \"disable_inactivity_monitor\": true,\ndocs/workflow-format.md:651:- Set `disable_inactivity_monitor` to `true` and `transitions` to `[]`.\ndocs/workflow-format.md:735:      \"disable_inactivity_monitor\": true,\ndocs/workflow-format.md:816:      \"disable_inactivity_monitor\": true,\ndocs/workflow-format.md:831:      \"disable_inactivity_monitor\": true,\n__pycache__\nexport.json\ngen_brief_a.py\ngen_brief_b.py\nshow.py\ndict_keys(['description', 'customers'])\n34\n", "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 12, in <module>\n  File \"C:\\Users\\nergi\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\encodings\\cp1252.py\", line 19, in encode\n    return codecs.charmap_encode(input,self.errors,encoding_table)[0]\n           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nUnicodeEncodeError: 'charmap' codec can't encode character '\\u0131' in position 220: character maps to <undefined>\n"}
+  [Bash] {"command": "cd \"cases/Build the Builder - Final Case/test-environment\"; PYTHONIOENCODING=utf-8 python - <<'E'\nimport json,collections\nd=json.load(open('test-customers.json',encoding='utf-8'))\ncs=d['customers']\nprint(d['description'][:500])\nseen=collections.Counter()\nfor c in cs:\n    for k,v in c['services'].items():\n        if k in('statement.week.change','statement.week.decide'):\n            for card,w in v.items() if isinstance(v,dict) and 'http' not in v else []:\n                pass\nc=cs[0]\nprint(json.dumps(c['services']['statement.week.change'],ensure_ascii=False)[:800])\nprint(json.dumps(c['services']['statement.week.decide'],ensure_ascii=False)[:600])\nprint(json.dumps(c['services']['cards.list'],ensure_ascii=False)[:300])\n# find non-OK week.change entries\ndef walk(o,path=''):\n    if isinstance(o,dict):\n        if 'http' in o and 'response' in o:\n            r=o['response']; \n            if 'change' in path:\n                dd=r.get('data',{})\n                if o['http']!=200 or dd.get('exitState')!='OK' or str(dd.get('responseCode'))!='0': print(path,o['http'],json.dumps(r,ensure_ascii=False)[:300])\n            if 'delaySeconds' in o: print('DELAY',path,o['delaySeconds'])\n        else:\n            for k,v in o.items(): walk(v,path+'/'+k)\nfor c in cs: walk(c['services'],c['customerNo'])\nE", "timeout": 20000}
+{"exit_code": 0, "stdout": "Freya Bank voice test environment: synthetic customers (fictional, no real people or cards) and the exact response each statement service returns for them. Shapes follow the 2026-10-01 service contract. Under 'services', services called with a card are keyed by the masked card number from cards.list; statement.week.decide and statement.week.change have a second key, the requested week (newStatementWeek). 'http' is the status code, 'response' the response body, 'delaySeconds' (when present) a del\n{\"540000******1234\": {\"2\": {\"http\": 200, \"response\": {\"data\": {\"responseCode\": 0, \"responseMessage\": \"00\", \"statementWeek\": \"2\", \"statementDay\": \"9\", \"exitState\": \"OK\"}, \"result\": {\"guid\": \"f0e1d2c3b4a5968778695a4b3c2d0008\", \"returnCode\": \"1\", \"messageText\": \"Success\", \"code\": \"1\", \"message\": \"Success\", \"type\": null, \"details\": {\"guid\": \"f0e1d2c3b4a5968778695a4b3c2d0008\", \"rootCause\": null, \"errorOrigin\": null}}}}, \"3\": {\"http\": 200, \"response\": {\"data\": {\"responseCode\": 0, \"responseMessage\": \"00\", \"statementWeek\": \"3\", \"statementDay\": \"16\", \"exitState\": \"OK\"}, \"result\": {\"guid\": \"f0e1d2c3b4a5968778695a4b3c2d0009\", \"returnCode\": \"1\", \"messageText\": \"Success\", \"code\": \"1\", \"message\": \"Success\", \"type\": null, \"details\": {\"guid\": \"f0e1d2c3b4a5968778695a4b3c2d0009\", \"rootCause\": null, \"errorOr\n{\"540000******1234\": {\"2\": {\"http\": 200, \"response\": {\"data\": {\"statementDate\": \"09.11.2026\", \"statementDueDate\": \"19.11.2026\", \"statementDay\": 9, \"responseCode\": 0, \"responseMessage\": \"Success\"}, \"result\": {\"guid\": \"f0e1d2c3b4a5968778695a4b3c2d0005\", \"returnCode\": \"1\", \"messageText\": \"Success\", \"code\": \"1\", \"message\": \"Success\", \"type\": null, \"details\": {\"guid\": \"f0e1d2c3b4a5968778695a4b3c2d0005\", \"rootCause\": null, \"errorOrigin\": null}}}}, \"3\": {\"http\": 200, \"response\": {\"data\": {\"statementDate\": \"16.11.2026\", \"statementDueDate\": \"26.11.2026\", \"statementDay\": 16, \"responseCode\": 0, \"response\n{\"http\": 200, \"response\": {\"data\": {\"cards\": [{\"cardNumber\": \"540000******1234\", \"cardNumberLast4\": \"1234\", \"productName\": \"Y\u0131ld\u0131z Pratik Classic\", \"status\": \"A\", \"isMainCard\": true}], \"validCardsCount\": 1, \"exitState\": \"1_CARD\"}, \"result\": {\"guid\": \"f0e1d2c3b4a5968778695a4b3c2d0002\", \"returnCode\": \nDELAY 94907600/cards.balance/540000******7211 12\n", "stderr": ""}
+  [Bash] {"command": "B=https://freya-statement-mock.nergiz-build-the-builder.workers.dev; for c in 93821776 97073972 97526380; do curl -s -m 20 -X POST $B/voice/v1/cards.list -H 'content-type: application/json' -d \"{\\\"data\\\":{\\\"customerNo\\\":\\\"$c\\\",\\\"aiFlow\\\":\\\"CardOps\\\"},\\\"call\\\":{}}\" -w ' HTTP %{http_code}\\n' | cut -c1-500; done; curl -s -m 30 -X POST $B/voice/v1/cards.balance -H 'content-type: application/json' -d '{\"data\":{\"cardNumber\":\"540000******1101\"}}' | cut -c1-1500", "timeout": 60000}
+{"exit_code": 0, "stdout": "{\"result\":{\"guid\":\"f0e1d2c3b4a5968778695a4b3c2d0185\",\"returnCode\":\"FB_IVR_CHANNEL_102\",\"messageText\":\"M\u00fc\u015fteriye ait ge\u00e7erli kart bilgisi bulunamad\u0131.\",\"code\":\"FB_IVR_CHANNEL_102\",\"message\":\"M\u00fc\u015fteriye ait ge\u00e7erli kart bilgisi bulunamad\u0131.\",\"type\":\"WARNING\",\"details\":{\"guid\":\"f0e1d2c3b4a5968778695a4b3c2d0185\",\"rootCause\":\"com.freyabank.ivrgateway.ivrchannel.rest.exception.NotFoundException\",\"errorOrigin\":\"ivr-gateway-test:ivr-channel-v0\"}}} HTTP 404\n{\"result\":{\"guid\":\"f0e1d2c3b4a5968778695a4b3c2d0001\",\"returnCode\":\"FBE00099\",\"messageText\":\"Teknik hata: ABORTED: \",\"code\":\"FBE00099\",\"message\":\"Teknik hata: ABORTED: \",\"type\":\"ERROR\",\"details\":{\"guid\":\"f0e1d2c3b4a5968778695a4b3c2d0001\",\"rootCause\":\"TechnicalError\",\"errorOrigin\":\"ivr-gateway-test:ivr-channel-v0\"}}} HTTP 500\n{\"data\":{\"cards\":[{\"cardNumber\":\"540000******1101\",\"cardNumberLast4\":\"1101\",\"productName\":\"Y\u0131ld\u0131z Premium\",\"status\":\"A\",\"isMainCard\":true},{\"cardNumber\":\"540000******1102\",\"cardNumberLast4\":\"1102\",\"productName\":\"Y\u0131ld\u0131z Fly\",\"status\":\"A\",\"isMainCard\":true},{\"cardNumber\":\"540000******1103\",\"cardNumberLast4\":\"1103\",\"productName\":\"Y\u0131ld\u0131z Platinum\",\"status\":\"A\",\"isMainCard\":true}],\"validCardsCount\":3,\"exitState\":\"MULTI_CARD\"},\"result\":{\"guid\":\"f0e1d2c3b4a5968778695a4b3c2d0187\",\"returnCode\":\"1\",\n{\"data\":{\"cardNumber\":\"5400********1101\",\"cardNumberLast4\":\"1101\",\"productName\":\"Y\u0131ld\u0131z Premium\",\"statementDate\":\"05.10.2026\",\"lastPayDate\":\"15.10.2026\",\"nextStatementDate\":\"05.11.2026\",\"nextLastPayDate\":\"15.11.2026\",\"debtTL\":{\"statementPaymentStatus\":\"HAS_DEBT\",\"transferAmount\":0,\"statementDebt\":22500,\"minPayment\":9000,\"remainingDebt\":22500,\"remainingMinPayment\":9000,\"currentPeriodExpense\":0,\"totalDebt\":22500,\"totalDebtPaymentStatus\":\"HAS_DEBT\",\"remainAutomaticPaymentAmount\":0},\"debtUSD\":{\"statementPaymentStatus\":\"NO_DEBT\",\"transferAmount\":0,\"statementDebt\":0,\"minPayment\":0,\"remainingDebt\":0,\"remainingMinPayment\":0,\"currentPeriodExpense\":0,\"totalDebt\":0,\"totalDebtPaymentStatus\":\"NO_DEBT\",\"remainAutomaticPaymentAmount\":0},\"debtEUR\":{\"statementPaymentStatus\":\"NO_DEBT\",\"transferAmount\":0,\"statementDebt\":0,\"minPayment\":0,\"remainingDebt\":0,\"remainingMinPayment\":0,\"currentPeriodExpense\":0,\"totalDebt\":0,\"totalDebtPaymentStatus\":\"NO_DEBT\",\"remainAutomaticPaymentAmount\":0},\"debtGBP\":{\"statementPaymentStatus\":\"NO_DEBT\",\"transferAmount\":0,\"statementDebt\":0,\"minPayment\":0,\"remainingDebt\":0,\"remainingMinPayment\":0,\"currentPeriodExpense\":0,\"totalDebt\":0,\"totalDebtPaymentStatus\":\"NO_DEBT\",\"remainAutomaticPaymentAmount\":0},\"statementPaymentStatus\":\"HAS_DEBT\",\"totalDebtPaymentStatus\":\"HAS_DEBT\",\"automaticPaymentFlag\":\"N\"},\"result\":{\"guid\":\"f0e1d2c3b4a5968778695a4b3c2d0188\",\"returnCode\":\"1\",\"messageText\":\"Success\",\"code\":\"1\",\"message\":\"Success\",\"type\":null,\"details\":{\"guid\":\"f0e1d2c3b4a5968\n", "stderr": ""}

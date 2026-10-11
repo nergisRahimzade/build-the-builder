@@ -1,0 +1,47 @@
+[
+  {
+    "requirement": "Support up to three products. Each product has own past_due, days_late, floor, and can have different deadlines.",
+    "source": "briefs/brief-b.md: 1-3",
+    "authority": "brief-b.md (overrides A, only where different)",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["products", "past_due", "days_late", "minimum_payment", "instalment_amount"],
+    "branch": "account_multi_product",
+    "test_coverage": "see multiproduct test cases"
+  },
+  {
+    "requirement": "State every product before requesting anything; band, deadline per product. Deadlines and attempts tracked per product. Group read-back and confirmation for promises.",
+    "source": "briefs/brief-b.md: 2, 3, 5, 7",
+    "authority": "brief-b.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["products"],
+    "branch": "multi_statement_and_confirmation",
+    "test_coverage": "see pay-all and partial-refusal cases"
+  },
+  {
+    "requirement": "Ask first about paying all (if more than one product). If not, process products individually, attempt logic per product.",
+    "source": "briefs/brief-b.md: 4, 5",
+    "authority": "brief-b.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": [],
+    "branch": "multi_payall_logic",
+    "test_coverage": "all-multi, partial-multi cases"
+  },
+  {
+    "requirement": "If promise refused/disputed/paid on only a subset of products, add note per Brief B section 8, reason from defined enum.",
+    "source": "briefs/brief-b.md: 8, 9, 11",
+    "authority": "brief-b.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["reason", "product_id"],
+    "branch": "add_note_and_service_error_handling",
+    "test_coverage": "see no-promise/mixed-multi tests"
+  },
+  {
+    "requirement": "Transfer after partial completion skips note for any products not actioned yet; no note on transfer, ever.",
+    "source": "briefs/brief-b.md: 10",
+    "authority": "brief-b.md",
+    "accepted_revision": "2026-03-14",
+    "runtime_fields_used": ["product_id", "queue"],
+    "branch": "transfer_skip_note",
+    "test_coverage": "transfer-multi cases"
+  }
+]

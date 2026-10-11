@@ -1,0 +1,12 @@
+[
+  {
+    "path": "D:\\NR\\Build-the-Builder\\build-the-builder-v3\\build-the-builder\\briefs\\brief-a.md",
+    "sha256": "d57c049c89aec4615f5b939c5a96ee9bd194142d17045bc4036615cfbdf0f1c7",
+    "delivery": "inline_source_text"
+  },
+  {
+    "path": "D:\\NR\\Build-the-Builder\\build-the-builder-v3\\build-the-builder\\briefs\\brief-b.md",
+    "sha256": "c59c70099148b91c13e9c5e40246a63b58638f09469d735f8eb65771bb63d550",
+    "delivery": "inline_source_text"
+  }
+]
