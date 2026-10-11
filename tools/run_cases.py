@@ -9,6 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / "tools"))
 import freya
 from score import http, score_ledger
+from tools.test_evidence import record_test
 
 PERSONA = """OUTPUT RULE: Write only the words you say on the phone. No stage directions, no brackets. One or two short sentences per turn, then wait for the other side.
 
@@ -77,9 +78,11 @@ def main():
     print(f"\n{n} / {len(final)} passed (bank records and conversation checks){'' if a.reps == 1 else f', a customer counts with {need} of {a.reps} runs'}. Last simulation {sim_id}, status {status}, {total_s:.0f} s.")
     with open(ROOT / "results" / "log.jsonl", "a") as f:      # one line per run, the record of how the score moved over time
         f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "agent_id": a.agent_id, "brief": a.brief, "runs": a.reps, "passed": n, "total": len(final), "seconds": round(total_s), "failed": [f["id"] for f in final if not f["pass"]]}) + "\n")
+    report = {"agent_id": a.agent_id, "simulation_id": sim_id, "iteration_id": it_id, "seconds": round(total_s), "passed": n, "total": len(final), "runs": a.reps, "final": final, "rows": reps[-1], "all_rows": reps}
+    record_test(report)
     if a.out:
         pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-        json.dump({"agent_id": a.agent_id, "simulation_id": sim_id, "iteration_id": it_id, "seconds": round(total_s), "passed": n, "total": len(final), "runs": a.reps, "final": final, "rows": reps[-1], "all_rows": reps}, open(a.out, "w"), indent=1)
+        json.dump(report, open(a.out, "w"), indent=1)
 
 def run_once(agent_id, cases, ids):
     """One simulation: every case once. Returns the scored rows."""
@@ -93,7 +96,7 @@ def run_once(agent_id, cases, ids):
         led = http("/v1/practice/ledger/" + sessions[c["id"]]["customer_id"])
         r = score_ledger(c, led)
         j = judge.get(ids[c["id"]], {})                      # the conversation checks, read from the transcript by the judge model
-        if j.get("outcome") != "pass": r["failed"].append("conversation: " + " ".join(str(j.get("reason") or "no verdict").split())[:400])
+        if j.get("outcome") != "pass": r["failed"].append("conversation: " + str(j.get("reason") or "no verdict"))
         r["pass"] = not r["failed"]
         rows.append({"id": c["id"], "level": c["level"], "family": c["family"], "pass": r["pass"], "failed": r["failed"], "call_id": j.get("callId"), "tools": [x["tool"] for x in led["calls"]], "customer_id": sessions[c["id"]]["customer_id"]})
         print(("PASS" if r["pass"] else "FAIL"), c["id"], f"{c['level']:<6}", f"{c['family']:<14}", "|", " > ".join(x["tool"].replace("verify_identity", "verify").replace("create_promise", "promise") for x in led["calls"]) or "(no tool calls)")
@@ -104,7 +107,10 @@ def run_once(agent_id, cases, ids):
     for r in rows:
         if not r["call_id"]: continue
         try: call = freya.get_call(r["call_id"])
-        except Exception: continue
+        except Exception as exc:
+            r["transcript_error"] = str(exc)
+            continue
+        r["call"] = call
         last_user, worst = None, 0.0
         for m in call.get("messages", []):
             t = m.get("secondsFromStart")

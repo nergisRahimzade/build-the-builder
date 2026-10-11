@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from submission import export_saved, write_submission, submission_metadata
+from submission import export_saved, write_submission, submission_metadata, combine_submissions, redact, Tee
 
 METADATA = {"team": "Test", "members": [{"name": "Tester", "email": "test@example.com"}],
             "repo": "https://example.com/repo", "mock_url": "https://example.com/mock",
@@ -20,19 +20,78 @@ spec.loader.exec_module(freya)
 
 
 class SubmissionTests(unittest.TestCase):
+    def test_console_encoding_does_not_abort_or_corrupt_trace(self):
+        import io
+        raw = io.BytesIO()
+        console = io.TextIOWrapper(raw, encoding="cp1252")
+        log = io.StringIO()
+        tee = Tee(console, log)
+        text = "branch \u2192 terminal; Turkish: \u0131\u015f"
+        tee.write(text)
+        tee.flush()
+        self.assertEqual(log.getvalue(), text)
+        self.assertIn(b"\\u2192", raw.getvalue())
+
+    def test_two_run_package_and_tamper_detection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            selected = {}
+            for label in ("hidden-1", "hidden-2"):
+                folder = root / "submissions" / label
+                folder.mkdir(parents=True)
+                selected[label] = folder.relative_to(root).as_posix()
+                (folder / "trace.jsonl").write_text('{"duration_s": 12}\n')
+                (folder / "console.log").write_text("test output")
+                (folder / "agent-1.workflow.json").write_text("{}")
+                exports = [{"file": "agent-1.workflow.json", "slot": label, "workflow_id": label}]
+                write_submission(folder, [], exports, root, {**METADATA,
+                    "_run_command_template": "python my-agents/agent_builder.py {brief_path} --tool-api {tool_api_path} --submission"})
+            output = combine_submissions(root, selected, "submission.json")
+            package = json.loads(output.read_text())
+            self.assertEqual(set(package["workflows"]), set(selected))
+            self.assertEqual(set(package["traces"]), set(selected))
+            self.assertEqual(package["mock_url"], METADATA["mock_url"])
+            for path in [*package["workflows"].values(), *package["traces"].values()]:
+                self.assertTrue((root / path).is_file())
+            (root / package["workflows"]["hidden-1"]).write_text("changed")
+            with self.assertRaisesRegex(ValueError, "changed after packaging"):
+                combine_submissions(root, selected, "second.json")
+
+    def test_logs_redacted_and_overlong_runs_rejected(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"FREYA_API_KEY": "secret-test-value"}):
+            folder = pathlib.Path(temp)
+            (folder / "trace.jsonl").write_text('{"duration_s": 1801, "message": "secret-test-value"}\n')
+            (folder / "console.log").write_text("Bearer another-secret")
+            (folder / "agent-1.workflow.json").write_text("{}")
+            with self.assertRaisesRegex(RuntimeError, "30-minute"):
+                write_submission(folder, [], [{"file": "agent-1.workflow.json"}])
+            self.assertNotIn("secret-test-value", (folder / "trace.jsonl").read_text())
+            self.assertNotIn("another-secret", (folder / "console.log").read_text())
+            self.assertFalse((folder / "submission.json").exists())
+
     def test_runner_produces_three_required_artifacts_without_live_api(self):
         import agent_builder as builder
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
             (root / "brief.md").write_text("Test brief")
             (root / "api.json").write_text("{}")
+            from tools.workflow_parts import end_node
+            workflow = {"initial_node": "done", "nodes": {"done": end_node("done")}}
+            (root / "out").mkdir()
+            (root / "out/brief.workflow.json").write_text(json.dumps(workflow))
+            completion = []
+            def make_agent(**kwargs):
+                completion.append(kwargs["tools"][-1])
+                return SimpleNamespace(model="mock")
             class Result:
                 context_wrapper = SimpleNamespace(usage=SimpleNamespace(requests=1, total_tokens=10))
 
                 async def stream_events(self):
                     pathlib.Path(os.environ["FREYA_RUN_LOG"]).write_text(json.dumps(
                         {"slot": "brief", "workflow_id": "w", "agent_id": "a"}))
-                    yield SimpleNamespace(type="raw_response_event", data="test event")
+                    yield SimpleNamespace(type="raw_response_event", data=SimpleNamespace(
+                        type="response.created", response=SimpleNamespace(id="r1", model="mock")))
+                    completion[0]("Synthetic completed run", "Synthetic offline orchestration test")
 
             def export(workflow_id, path):
                 pathlib.Path(path).write_text(json.dumps({"workflow_id": workflow_id, "agent_id": "a", "workflow": {}}))
@@ -40,10 +99,13 @@ class SubmissionTests(unittest.TestCase):
             with patch.object(builder, "KIT", root), \
                     patch.object(builder, "submission_metadata", return_value=METADATA), \
                     patch.object(builder, "snapshot_inputs", return_value=[]), \
-                    patch.object(builder, "Agent", return_value=SimpleNamespace(model="mock")), \
+                    patch.object(builder, "Agent", side_effect=make_agent), \
+                    patch.object(builder, "function_tool", side_effect=lambda fn: fn), \
                     patch.object(builder.Runner, "run_streamed", return_value=Result()), \
                     patch.dict("sys.modules", {"freya": freya}), \
                     patch.object(freya, "export_workflow", side_effect=export), \
+                    patch.object(freya, "api", return_value={"workflow": {"workflow": workflow}}), \
+                    patch.object(freya, "workspace_id", return_value="workspace"), \
                     patch("sys.argv", ["agent_builder.py", "brief.md", "--tool-api", "api.json", "--submission"]):
                 builder.run_cli()
             folder, = (root / "submissions").iterdir()
@@ -53,6 +115,7 @@ class SubmissionTests(unittest.TestCase):
             self.assertEqual(set(metadata), {"team", "members", "repo", "commit", "run_command", "workflow", "trace", "mock_url"})
             self.assertIn("done:", (folder / "console.log").read_text())
             self.assertIn('"end":', (folder / "trace.jsonl").read_text())
+            self.assertIn('"type": "model_call"', (folder / "trace.jsonl").read_text())
 
     def test_successful_save_is_exported_and_hashed(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -71,6 +134,8 @@ class SubmissionTests(unittest.TestCase):
             exports = export_saved(folder, ["brief"], export, records.append)
             self.assertEqual(calls, ["w"])
             self.assertEqual(exports[0]["version"], 2)
+            self.assertEqual(exports[0]["steps"], 0)
+            self.assertEqual(exports[0]["tools"], 0)
             (folder / "trace.jsonl").write_text("trace")
             (folder / "console.log").write_text("output")
             write_submission(folder, [], exports)

@@ -1,0 +1,6 @@
+{
+  "name": "freya-statement-mock",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test worker.test.mjs", "dev": "npx wrangler dev", "deploy": "npx wrangler deploy" }
+}

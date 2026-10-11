@@ -1,0 +1,400 @@
+[
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-01",
+    "call_id": "28f92953-a211-4fa7-9dc5-e08803e62479",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 420.0, '2026-10-14')]",
+      "the call was not closed with close_call",
+      "conversation: The conversation failed three of the four success criteria: 1) Only one security question (date of birth) was provided in Message 5 before the assistant accessed the account in Message 6, failing the requirement for two questions. 2) There is no record of the 'create_promise' tool being called in the system events, although the agent proceeded as if a payment arrangement were made. 3) Since no pro"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-02",
+    "call_id": "9547e758-2312-40ae-bb3b-c75b5e9c06d5",
+    "reasons": [
+      "outcome (None, None), expected ('not_reached', 'callback')",
+      "callbacks [], expected [{'date': '2026-10-15', 'time': '11:00'}]",
+      "the call was not closed with close_call",
+      "conversation: The conversation failed on two criteria: 1. The agent stated the call was 'regarding an account matter' in [Message 2], which violates the requirement to not say why it is calling. 2. The callback was not successfully scheduled; although the agent claimed to have done so in [Message 4], the system events show the 'schedule_callback' function failed with a 'function_call_error' due to a missing 'ur"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-03",
+    "call_id": "940d75c0-70b8-4878-a1ee-8bd87c4fcf92",
+    "reasons": [
+      "outcome (None, None), expected ('not_verified', 'failed')",
+      "the call was not closed with close_call",
+      "conversation: The assistant failed all the provided success criteria and did not end the call properly. First, it disclosed the account balance ($1,250.00) in [Message 8] and again in [Message 92]. Second, the assistant never directed the customer to use the app or a branch. Third, the verification process did not terminate after the user provided or corrected information multiple times; instead, it entered a l"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-04",
+    "call_id": "d35f8f26-00fa-4236-91a0-7ed8a392a45d",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 1250.0, '2026-10-23')]",
+      "the call was not closed with close_call",
+      "conversation: The agent failed to meet the specific date requirement defined in the success criteria. Although the agent correctly identified as a digital assistant ([Message 4]) and accepted the user's initial date without treating it as a refusal ([Message 22]), the final promise date was set to 10 November ([Message 30]) instead of the required late-band deadline of 23 October. Additionally, the agent contin"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-05",
+    "call_id": "0bbac4e2-1543-4e79-8b33-f564c95a279c",
+    "reasons": [
+      "outcome (None, None), expected ('no_promise', 'hardship')",
+      "the call was not closed with close_call",
+      "conversation: The conversation failed several success criteria and did not end properly. Specifically: 1. The assistant offered a 'repayment plan or a temporary freeze' in Message 8, violating the negative constraint 'no discount, waiver or plan offered'. 2. While the assistant provided sympathy and offered the specialist team once, the call entered an infinite loop of 'Goodbye' messages from Message 18 to Mess"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-06",
+    "call_id": "b38ea270-6485-43e1-8ddc-da964655507d",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 637.5, '2026-10-16')]",
+      "the call was not closed with close_call",
+      "conversation: The call failed several success criteria and did not end properly. 1. The agent explicitly asked the user what amount they could afford to pay in messages [22] and [24], violating the requirement to never ask. 2. While the agent offered a minimum payment in message [26], it failed to include the required note that the remaining balance would stay overdue. 3. The final agreement was for £25, not th"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-07",
+    "call_id": "a311d524-1573-4d0e-a426-9e4604d17b06",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 540.0, '2026-10-27')]",
+      "the call was not closed with close_call",
+      "conversation: The agent failed to meet the specific requirements regarding the payment date. Although the agent asked for a payment date in message 6, it accepted Monday, October 26th in message 18 instead of rejecting it and offering the next business day (Tuesday, October 27th). Consequently, no promise was recorded for October 27th as required by the success criteria."
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-08",
+    "call_id": "1e0e9a3f-c838-4b66-85db-3bc81772b1ed",
+    "reasons": [
+      "outcome (None, None), expected ('paid', None)",
+      "the call was not closed with close_call",
+      "conversation: The evaluation failed for two primary reasons: 1. The agent did not mention that payments can take one business day to appear, which was a specific success criterion. 2. The call did not end properly. Although the ground truth indicates the customer eventually ended the call, the agent engaged in an infinite loop of saying 'Goodbye' for over 140 turns (from Message 12 to Message 160) after the con"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-09",
+    "call_id": "597faf4b-c3ad-4efe-afdf-52837f3e77ea",
+    "reasons": [
+      "outcome (None, None), expected ('transferred', 'restructuring')",
+      "transfers [], expected [{'queue': 'restructuring'}]",
+      "the call was not closed with close_call",
+      "conversation: The conversation failed on multiple counts. First, the success criterion 'transfer_to_agent called with queue restructuring' was not met; the assistant attempted to process the restructuring request itself and informed the user it was submitted for review instead of transferring the call. Second, the assistant described specific payment plans/amounts (75 EUR or 100 EUR) in [Message 20]. Finally, t"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-10",
+    "call_id": "6cac1919-0b7f-4c7a-8eca-75673073aa2e",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 365.0, '2026-10-16')]",
+      "the call was not closed with close_call",
+      "conversation: The conversation failed the success criteria and the requirement for a proper ending. First, the assistant explicitly stated 'this call is recorded' in Message 0, which violates the specific negative constraint. Second, although the call eventually ended with 'customer-ended-call', the agent engaged in an excessive, repetitive loop of saying 'Goodbye!' from Message 12 through Message 160. This vio"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-11",
+    "call_id": "3bde5cad-905a-42ae-9d82-cc1843d5deef",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 220.0, '2026-10-16'), ('p2', 640.0, '2026-10-16'), ('p3', 75.0, '2026-10-16')]",
+      "the call was not closed with close_call",
+      "conversation: The conversation failed several criteria: 1) The assistant never explicitly stated the three products; it only vaguely referred to 'items' or 'payments' after the user brought them up. 2) No 'create_promise' tool calls were executed. 3) The call ending was improper: after saying goodbye in message 10, the assistant entered a repetitive loop of 'Goodbye!' for over 150 turns without terminating the "
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-12",
+    "call_id": "60917330-6443-4d21-88d3-664234e44f64",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 510.0, '2026-10-15')]",
+      "notes [], expected [('p2', 'refused'), ('p3', 'refused')]",
+      "the call was not closed with close_call",
+      "conversation: The conversation failed several success criteria and did not end properly. First, the phone question was never asked, failing the requirement that it be asked again once. Second, while the personal loan correctly received two attempts, the car loan also received two attempts (Message 14 and Message 16) instead of the requested one attempt. Finally, the call failed the proper ending requirements; a"
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\all-cases.json",
+    "iteration": 1,
+    "scenario": "PUB-13",
+    "call_id": "a35a6c03-acaa-4200-a410-e8ac2e3ca17a",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 300.0, '2026-10-30'), ('p2', 900.0, '2026-10-23')]",
+      "the call was not closed with close_call",
+      "conversation: The conversation failed to meet two of the success criteria: 1) The loan was recorded for October 30th instead of its specific deadline of October 23rd. 2) The read-back only mentioned October 30th and failed to name both dates (23 October and 30 October) as required. The call ended properly via user termination."
+    ],
+    "tools": [],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-a-run1.json",
+    "iteration": 1,
+    "scenario": "PUB-06",
+    "call_id": "16e8fed7-17f7-4754-97ff-560e22462fc2",
+    "reasons": [
+      "conversation: The agent failed to meet the 'offered once' criterion for the minimum payment. While the agent correctly offered the minimum payment of 637.50 with the required note in Message 8, they offered the same amount again in Message 10 for a different date, violating the 'once' limit. Additionally, the second offer in Message 10 omitted the required note about the rest of the balance staying overdue. Oth"
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "create_promise",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-a-run2.json",
+    "iteration": 1,
+    "scenario": "PUB-06",
+    "call_id": "b90c861f-e73b-4b65-9398-d680b21bbb29",
+    "reasons": [
+      "promises [('p1', 637.5, '2026-10-23')], expected [('p1', 637.5, '2026-10-16')]",
+      "conversation: - Agent never asked the user how much they could pay, which meets the first criterion. - The minimum payment was offered twice (Message 8 and Message 12) with the overdue note, violating the requirement to offer it only once. - The final promise was secured for Friday, October 23rd, rather than the required date of Friday, October 16th (Message 14 and System Events). - The call ended properly via "
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "create_promise",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-a-run2.json",
+    "iteration": 2,
+    "scenario": "PUB-06",
+    "call_id": "6b28382b-534f-4fac-a2c9-24beccfb2135",
+    "reasons": [
+      "conversation: The call failed because the minimum payment was offered twice instead of once. - The agent correctly never asked the user how much she could pay, instead offering specific amounts. - The agent successfully secured a promise for 637.50 on Friday 16 October. - However, the minimum payment (637.50) with the note about the rest staying overdue was offered at [Message 8] and then again at [Message 12]."
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "create_promise",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-a-run2.json",
+    "iteration": 2,
+    "scenario": "PUB-07",
+    "call_id": "40151e5f-9cd7-429e-80b6-9b12708f7d47",
+    "reasons": [
+      "promises [('p1', 180.0, '2026-10-27')], expected [('p1', 540.0, '2026-10-27')]"
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "create_promise",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-a-run2.json",
+    "iteration": 2,
+    "scenario": "PUB-10",
+    "call_id": "34d4ae2e-58e7-44d4-a3b9-0a35910b19b1",
+    "reasons": [
+      "conversation: The conversation failed to meet all success criteria. 1. The agent used the word 'recorded' in Message 0 (the mandatory call recording disclosure) and Message 10 (explaining that the previous attempt failed) before a successful 'create_promise' API call was executed after Message 11. The criteria strictly prohibits the use of 'recorded' before a successful call. 2. There was exactly one promise in"
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "create_promise",
+      "create_promise",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-a-run3.json",
+    "iteration": 1,
+    "scenario": "PUB-06",
+    "call_id": "69b4172d-1da1-4d7c-8d3c-29d68f53ab5e",
+    "reasons": [
+      "conversation: The agent met most of the success criteria but failed the quantitative constraint regarding the minimum payment offer. The agent correctly avoided asking how much the customer could pay, instead proposing specific amounts in Message 6, Message 8, and Message 10. The agent also successfully secured a promise for 637.50 on Friday 16 October 2026 (Message 13 and system events), which aligns with the "
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "create_promise",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-a-run4.json",
+    "iteration": 1,
+    "scenario": "PUB-10",
+    "call_id": "a198f5eb-b98b-4b9a-9a94-76c30d3c1e60",
+    "reasons": [
+      "conversation: The agent satisfied the first criterion but failed the second. 1. Exactly one promise: The first 'create_promise' API call failed with a specific message stating 'nothing was recorded'. The second attempt (the retry) succeeded. Therefore, exactly one promise exists in the ledger. 2. 'Recorded' before successful call: The agent used the word 'recorded' in Message 0 ('this call is recorded') as part"
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "create_promise",
+      "create_promise",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-b-run2-all.json",
+    "iteration": 1,
+    "scenario": "PUB-05",
+    "call_id": "425a84f6-c61d-4d5d-83d0-dadcaed6a35a",
+    "reasons": [
+      "notes [('p1', 'hardship')], expected []"
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "add_note",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-b-run2-all.json",
+    "iteration": 1,
+    "scenario": "PUB-08",
+    "call_id": "0a7881be-547c-4967-ae44-2517d83a220a",
+    "reasons": [
+      "notes [('p1', 'paid')], expected []"
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "add_note",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\brief-b-run3-words.json",
+    "iteration": 1,
+    "scenario": "PUB-12",
+    "call_id": "4ae327cd-6176-41ed-b455-e406bdca2b3a",
+    "reasons": [
+      "promises [('p1', 510.0, '2026-10-14')], expected [('p1', 510.0, '2026-10-15')]"
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "verify_identity",
+      "get_account",
+      "create_promise",
+      "add_note",
+      "add_note",
+      "close_call"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  },
+  {
+    "result_file": "results\\pub01.json",
+    "iteration": 1,
+    "scenario": "PUB-01",
+    "call_id": "d346095f-a043-42a2-bc80-e69e6b28ac95",
+    "reasons": [
+      "outcome (None, None), expected ('promise', None)",
+      "promises [], expected [('p1', 420.0, '2026-10-14')]",
+      "the call was not closed with close_call",
+      "conversation: - The security verification was completed successfully before the call to 'get_account'. - The word 'collections' was not used until after identity verification. - The 'create_promise' function was never called, which was a required criterion. - The assistant did not mention sending a text message after the promise was discussed."
+    ],
+    "tools": [
+      "verify_identity",
+      "verify_identity",
+      "get_account"
+    ],
+    "transcript_available_in_result": false,
+    "review_status": "Requires source-policy and full transcript review before claiming a root cause"
+  }
+]

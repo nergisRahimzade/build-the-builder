@@ -1,0 +1,11 @@
+{
+  "team": "Nergiz",
+  "members": [
+    {
+      "name": "Nergiz Rahimzade",
+      "email": "nergisrahimzade123@gmail.com"
+    }
+  ],
+  "repo": "https://github.com/nergisRahimzade/build-the-builder",
+  "mock_url": "https://freya-statement-mock.nergiz-build-the-builder.workers.dev"
+}

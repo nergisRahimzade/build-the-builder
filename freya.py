@@ -39,11 +39,27 @@ def save_workflow(slot, workflow, state_file=".freya-agents.json"):
     `slot` is your own label, for example the brief's file name. A workspace holds a limited number of workflows,
     so a builder that creates a new one on every run stops working after a few runs."""
     import pathlib
+    enforce_audit = os.environ.get("FREYA_ENFORCE_AUDIT") == "1"
+    if enforce_audit:
+        from tools.audit_workflow import audit
+        result = audit(workflow, os.environ.get("FREYA_MOCK_URL") or None)
+        if result["errors"]:
+            raise ValueError("Workflow preflight failed before saving: " + "; ".join(result["errors"]))
+        # Validate before changing a saved workflow; a successful API write alone is not enough.
+        validation = validate_workflow(slot, workflow)
+        if isinstance(validation, dict) and (validation.get("valid") is False or validation.get("success") is False or validation.get("errors")):
+            raise ValueError("Freya dry-run validation failed: " + json.dumps(validation))
     f = pathlib.Path(state_file); state = json.loads(f.read_text()) if f.exists() else {}
     if slot in state:
         state[slot]["version"] = update_workflow(state[slot]["workflow_id"], workflow); f.write_text(json.dumps(state, indent=1))
     else:
         state[slot] = create_workflow(f"{slot} {time.strftime('%m%d-%H%M%S')}", workflow); f.write_text(json.dumps(state, indent=1))
+    if enforce_audit:
+        from tools.audit_workflow import compare_deployment
+        deployed = api("GET", f"/api/v2/workflow/{state[slot]['workflow_id']}", workspaceId=workspace_id())["workflow"]["workflow"]
+        differences = compare_deployment(workflow, deployed)
+        if differences:
+            raise ValueError("Saved workflow differs from generated workflow; repair within this run: " + "; ".join(differences))
     # Let the builder associate successful saves with this run, not stale workspace state.
     if os.environ.get("FREYA_RUN_LOG"):
         with open(os.environ["FREYA_RUN_LOG"], "a", encoding="utf-8") as log:
